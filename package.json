@@ -14,6 +14,7 @@
   },
   "devDependencies": {
     "@types/node": "22.15.19",
+    "dotenv": "16.5.0",
     "prool": "0.0.24",
     "vite-plugin-checker": "0.9.3",
     "vite-plugin-dynamic-import": "1.6.0",

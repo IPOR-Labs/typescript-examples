@@ -1,6 +1,6 @@
 import { Address, Hex } from 'viem';
 
-export const ANVIL_TEST_ACCOUNT = [
+export const ANVIL_TEST_ACCOUNTS = [
   {
     address: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
     privateKey:

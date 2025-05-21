@@ -31,5 +31,11 @@ export const getTotalAssets = async (
     ],
   });
 
-  return results[1].result;
+  const totalAssets = results[1].result;
+
+  if (totalAssets === undefined) {
+    throw new Error('totalAssets is undefined');
+  }
+
+  return totalAssets;
 };
