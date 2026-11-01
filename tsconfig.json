@@ -1,26 +1,4 @@
 {
-  "compilerOptions": {
-    // Type checking
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-
-    // Interop constraints
-    "verbatimModuleSyntax": false,
-    "esModuleInterop": true,
-    "isolatedModules": true,
-    "allowSyntheticDefaultImports": true,
-    "resolveJsonModule": true,
-
-    // Language and environment
-    "moduleResolution": "bundler",
-    "module": "ESNext",
-    "noEmit": true,
-    "lib": ["ES2022"],
-    "target": "ES2022",
-
-    // Skip type checking for node modules
-    "skipLibCheck": true
-  },
-  "include": ["./**/*.ts"],
-  "exclude": ["node_modules"]
+  "compilerOptions": { "strict": true, "module": "node16", "moduleResolution": "node16", "target": "es2022", "noEmit": true, "skipLibCheck": true, "types": ["node"] },
+  "include": ["hardhat.config.ts", "test"]
 }
