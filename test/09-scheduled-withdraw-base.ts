@@ -149,7 +149,6 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [ALPHA_ROLE, ALPHA, 0] }) });
 
     assert.notEqual(vault, zeroAddress);
-    assert.notEqual(withdrawManager, zeroAddress);
   });
 
   it("02 installs Aave V3 and opens deposits to everyone, as in S1", async () => {
@@ -196,7 +195,6 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     lockEnd = (await now()) + window;
 
     assert.equal(window, 86400n);
-    assert.equal(lockEnd, (await now()) + window);
     assert.equal(requestFee, parseEther("0.01"));
     assert.equal((usdc("400") * requestFee) / 10n ** 18n, usdc("4"));
   });

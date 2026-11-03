@@ -82,7 +82,7 @@ const balanceUpdater = await viem.getWalletClient(BALANCE_UPDATER);
 
 describe("S7 Alpha cycle on Aave V3", () => {
   let vault: Address, accessManager: Address;
-  let idleBefore: bigint, totalAssetsBefore: bigint, storedBefore: bigint;
+  let totalAssetsBefore: bigint, storedBefore: bigint;
   const idle = () => publicClient.readContract({ address: USDC, abi: erc20Abi, functionName: "balanceOf", args: [vault] });
   const inAave = () => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalAssetsInMarket", args: [AAVE_V3_MARKET] });
   const totalAssets = () => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalAssets" });
@@ -150,7 +150,7 @@ describe("S7 Alpha cycle on Aave V3", () => {
   });
 
   it("05 the Alpha enters Aave V3 with 300 USDC", async () => {
-    idleBefore = await idle();
+    const idleBefore = await idle();
     await publicClient.waitForTransactionReceipt({ hash: await alpha.writeContract({ address: vault, abi: vaultAbi, functionName: "execute", args: [[enterAction(usdc("300"))]] }) });
 
     assert.equal(await idle(), idleBefore - usdc("300"));
