@@ -63,9 +63,8 @@ const accessManagerAbi = parseAbi([
   "function grantRole(uint64 roleId, address account, uint32 executionDelay)",
   "error AccessManagerUnauthorizedAccount(address msgsender, uint64 roleId)",
 ]);
-// Written by hand: ipor-abi's Base folder has no FeeManager ABI. Source: ipor-fusion 004d054,
-// contracts/managers/fee/FeeManager.sol, contracts/managers/fee/FeeManagerFactory.sol (RecipientFee)
-// and contracts/libraries/PlasmaVaultLib.sol (the fee errors, raised by the vault and bubbled up).
+// From ipor-abi: mainnet/mainnet-base/abis/pretty/IporPlasmaVaultFeeManagerWstETH.abi.sol at 59444e2 (functions and RecipientFee).
+// The fee errors come from mainnet/mainnet-base-fusion/abis/pretty/PlasmaVaultBase.abi.sol at b942366 (raised by the vault and bubbled up).
 const feeManagerAbi = parseAbi([
   "struct RecipientFee { address recipient; uint256 feeValue; }",
   "function updateManagementFee(RecipientFee[] recipientFees)",
@@ -135,7 +134,8 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
   });
 
   it("03 the Atomist sets a 200 bps management and 1000 bps performance fee for a recipient", async () => {
-    // Each call replaces the whole recipient list, and harvests the fees accrued so far first.
+    // Each call replaces the whole recipient list. It harvests only the fees already realized as shares in the fee account.
+    // The fee accrued since the last realization goes to the new recipients, unless a deposit or withdraw realizes it first.
     await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: feeManager, abi: feeManagerAbi, functionName: "updateManagementFee", args: [[{ recipient: FEE_RECIPIENT, feeValue: 200n }]] }) });
     await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: feeManager, abi: feeManagerAbi, functionName: "updatePerformanceFee", args: [[{ recipient: FEE_RECIPIENT, feeValue: 1000n }]] }) });
 
@@ -177,9 +177,17 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
     const dao = await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "getIporDaoFeeRecipientAddress" });
     const recipientBefore = await shareBalance(FEE_RECIPIENT);
     const daoBefore = await shareBalance(dao);
+    const managementFeeAccount = await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "MANAGEMENT_FEE_ACCOUNT" });
+    const performanceFeeAccount = await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "PERFORMANCE_FEE_ACCOUNT" });
+    const supplyBefore = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalSupply" });
     // harvestAllFees has no role, so a keeper can automate it. It moves shares out of the fee accounts and mints nothing.
+    // The fee manager moves them, and it is the only holder of the share transfer role, so this works before enableTransferShares.
     await publicClient.waitForTransactionReceipt({ hash: await harvester.writeContract({ address: feeManager, abi: feeManagerAbi, functionName: "harvestAllFees" }) });
 
+    assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalSupply" }), supplyBefore);
+    // The recipient shares round down, so a few wei of shares (22 here) stay in a fee account.
+    assert.ok((await shareBalance(managementFeeAccount)) < 100n);
+    assert.ok((await shareBalance(performanceFeeAccount)) < 100n);
     assert.ok((await shareBalance(FEE_RECIPIENT)) > recipientBefore);
     assert.ok((await shareBalance(dao)) > daoBefore);
   });
@@ -202,7 +210,8 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
   it("08 share transfers are off until the Atomist enables them", async () => {
     const amount = shares("10");
     await assert.rejects(
-      // Expected to revert: a new vault restricts transfer and transferFrom to a role no holder has.
+      // Expected to revert: a new vault restricts transfer and transferFrom to TECH_VAULT_TRANSFER_SHARES_ROLE (7).
+      // Only the fee manager holds it, which is why step 06's harvest moves shares before enableTransferShares.
       depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "transfer", args: [SHARE_RECEIVER, amount] }),
       /AccessManagedUnauthorized/,
     );

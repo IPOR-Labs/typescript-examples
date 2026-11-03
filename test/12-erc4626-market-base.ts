@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { before, describe, it } from "node:test";
 import { network } from "hardhat";
-import { encodeFunctionData, erc20Abi, maxUint256, parseAbi, parseEther, parseEventLogs, parseUnits, pad, zeroAddress, type Address } from "viem";
+import { encodeFunctionData, erc20Abi, maxUint256, parseAbi, parseEther, parseEventLogs, parseUnits, pad, type Address } from "viem";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory),
 // mainnet/addresses.json at e228075 (ERC-4626 supply and balance fuses) and README.md (USDC).
@@ -35,7 +35,7 @@ const FUSE_MANAGER = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
 const ALPHA = "0x90F79bf6EB2c4f870365E785982E1f101E93b906";
 const BALANCE_UPDATER = "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc";
 
-// ABIs from ipor-abi (mainnet/mainnet-base-fusion/abis; IporFusionFactoryImpl and IporFusionAccessManagerBase at 55b2d9e, PlasmaVaultBase at b942366): IporFusionFactory, PlasmaVault (with PlasmaVaultGovernance),
+// ABIs from ipor-abi (mainnet/mainnet-base-fusion/abis; IporFusionFactoryImpl and IporFusionAccessManagerBase at 55b2d9e, PlasmaVaultBase at b942366, IporFusionPlasmaVaultCoreBase at 55b2d9e): IporFusionFactory, PlasmaVault (with PlasmaVaultGovernance),
 // IporFusionAccessManager and Erc4626SupplyFuse.
 const factoryAbi = parseAbi([
   "function clone(string assetName, string assetSymbol, address underlyingToken, uint256 redemptionDelayInSeconds, address owner, uint256 daoFeePackageIndex) returns (FusionInstance)",
@@ -59,7 +59,10 @@ const vaultAbi = parseAbi([
   "function totalAssetsInMarket(uint256 marketId) view returns (uint256)",
   "error AccessManagedUnauthorized(address caller)",
 ]);
-const accessManagerAbi = parseAbi(["function grantRole(uint64 roleId, address account, uint32 executionDelay)"]);
+const accessManagerAbi = parseAbi([
+  "function grantRole(uint64 roleId, address account, uint32 executionDelay)",
+  "function hasRole(uint64 roleId, address account) view returns (bool isMember, uint32 executionDelay)",
+]);
 const erc4626SupplyFuseAbi = parseAbi([
   "struct Enter { address vault; uint256 vaultAssetAmount; uint256 minSharesOut; }",
   "struct Exit { address vault; uint256 vaultAssetAmount; uint256 maxSharesBurned; }",
@@ -79,6 +82,10 @@ const balanceUpdater = await viem.getWalletClient(BALANCE_UPDATER);
 
 describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
   let vault: Address, accessManager: Address;
+  const hasRole = async (roleId: bigint, account: Address) => {
+    const [isMember] = await publicClient.readContract({ address: accessManager, abi: accessManagerAbi, functionName: "hasRole", args: [roleId, account] });
+    return isMember;
+  };
   const totalAssets = () => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalAssets" });
   const inMarket = () => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalAssetsInMarket", args: [ERC4626_0001_MARKET] });
   const idle = () => publicClient.readContract({ address: USDC, abi: erc20Abi, functionName: "balanceOf", args: [vault] });
@@ -104,7 +111,9 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
     // The Atomist opens deposits to everyone.
     await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: vault, abi: vaultAbi, functionName: "convertToPublicVault" }) });
 
-    assert.notEqual(vault, zeroAddress);
+    assert.equal(await hasRole(ATOMIST_ROLE, ATOMIST), true);
+    assert.equal(await hasRole(FUSE_MANAGER_ROLE, FUSE_MANAGER), true);
+    assert.equal(await hasRole(ALPHA_ROLE, ALPHA), true);
   });
 
   it("02 the whale deposits 10000 USDC", async () => {
@@ -154,9 +163,8 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
   });
 
   it("06 the Alpha exits the market in full and the funds are idle again", async () => {
-    // An amount above the position exits all of it: reading the position and exiting exactly that leaves a few wei of rounding. maxSharesBurned is the most shares the exit may burn.
-    const position = await inMarket();
-    const data = encodeFunctionData({ abi: erc4626SupplyFuseAbi, functionName: "exit", args: [{ vault: STEAKHOUSE_USDC, vaultAssetAmount: position + usdc("1"), maxSharesBurned: maxUint256 }] });
+    // Erc4626SupplyFuse redeems at most the cap when the amount is at least maxWithdraw (ipor-fusion 004d054), so maxUint256 is a full exit. maxSharesBurned is the most shares the exit may burn.
+    const data = encodeFunctionData({ abi: erc4626SupplyFuseAbi, functionName: "exit", args: [{ vault: STEAKHOUSE_USDC, vaultAssetAmount: maxUint256, maxSharesBurned: maxUint256 }] });
     await publicClient.waitForTransactionReceipt({ hash: await alpha.writeContract({ address: vault, abi: vaultAbi, functionName: "execute", args: [[{ fuse: ERC4626_SUPPLY_FUSE, data }]] }) });
 
     assert.equal(await inMarket(), 0n);

@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { before, describe, it } from "node:test";
 import { network } from "hardhat";
-import { encodeFunctionData, erc20Abi, maxUint256, parseAbi, parseEther, parseEventLogs, parseUnits, zeroAddress, type Address, type Hex } from "viem";
+import { encodeFunctionData, erc20Abi, maxUint256, parseAbi, parseEther, parseEventLogs, parseUnits, type Address, type Hex } from "viem";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory),
 // mainnet/addresses.json at e228075 (Morpho supply and balance fuses) and README.md (USDC).
@@ -36,7 +36,7 @@ const FUSE_MANAGER = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
 const ALPHA = "0x90F79bf6EB2c4f870365E785982E1f101E93b906";
 const BALANCE_UPDATER = "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc";
 
-// ABIs from ipor-abi (mainnet/mainnet-base-fusion/abis; IporFusionFactoryImpl and IporFusionAccessManagerBase at 55b2d9e, PlasmaVaultBase at b942366): IporFusionFactory, PlasmaVault (with PlasmaVaultGovernance),
+// ABIs from ipor-abi (mainnet/mainnet-base-fusion/abis; IporFusionFactoryImpl and IporFusionAccessManagerBase at 55b2d9e, PlasmaVaultBase at b942366, IporFusionPlasmaVaultCoreBase at 55b2d9e): IporFusionFactory, PlasmaVault (with PlasmaVaultGovernance),
 // IporFusionAccessManager and MorphoSupplyFuse.
 const factoryAbi = parseAbi([
   "function clone(string assetName, string assetSymbol, address underlyingToken, uint256 redemptionDelayInSeconds, address owner, uint256 daoFeePackageIndex) returns (FusionInstance)",
@@ -60,7 +60,10 @@ const vaultAbi = parseAbi([
   "function totalAssetsInMarket(uint256 marketId) view returns (uint256)",
   "error AccessManagedUnauthorized(address caller)",
 ]);
-const accessManagerAbi = parseAbi(["function grantRole(uint64 roleId, address account, uint32 executionDelay)"]);
+const accessManagerAbi = parseAbi([
+  "function grantRole(uint64 roleId, address account, uint32 executionDelay)",
+  "function hasRole(uint64 roleId, address account) view returns (bool isMember, uint32 executionDelay)",
+]);
 const morphoSupplyFuseAbi = parseAbi([
   "struct MorphoSupplyFuseEnterData { bytes32 morphoMarketId; uint256 amount; }",
   "struct MorphoSupplyFuseExitData { bytes32 morphoMarketId; uint256 amount; }",
@@ -80,6 +83,10 @@ const balanceUpdater = await viem.getWalletClient(BALANCE_UPDATER);
 
 describe("S13 Morpho Lend market on one Morpho Blue market", () => {
   let vault: Address, accessManager: Address;
+  const hasRole = async (roleId: bigint, account: Address) => {
+    const [isMember] = await publicClient.readContract({ address: accessManager, abi: accessManagerAbi, functionName: "hasRole", args: [roleId, account] });
+    return isMember;
+  };
   const totalAssets = () => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalAssets" });
   const inMarket = () => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalAssetsInMarket", args: [MORPHO_MARKET] });
   const idle = () => publicClient.readContract({ address: USDC, abi: erc20Abi, functionName: "balanceOf", args: [vault] });
@@ -105,7 +112,9 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
     // The Atomist opens deposits to everyone.
     await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: vault, abi: vaultAbi, functionName: "convertToPublicVault" }) });
 
-    assert.notEqual(vault, zeroAddress);
+    assert.equal(await hasRole(ATOMIST_ROLE, ATOMIST), true);
+    assert.equal(await hasRole(FUSE_MANAGER_ROLE, FUSE_MANAGER), true);
+    assert.equal(await hasRole(ALPHA_ROLE, ALPHA), true);
   });
 
   it("02 the whale deposits 10000 USDC", async () => {
@@ -124,6 +133,11 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
     // Grant the id on market 14 only. Do not also grant it on market 41 (MORPHO_LIQUIDITY_IN_MARKETS):
     // both balance fuses would then count the same position, and total assets would count it twice.
     // grantMarketSubstrates replaces the market's whole list.
+    // Oracle requirement: llms.txt requires an oracle price for both tokens of every granted Morpho market, or the market blocks.
+    // This story passes without a cbBTC price because MorphoBalanceFuse (ipor-fusion 004d054,
+    // contracts/fuses/morpho/MorphoBalanceFuse.sol:142) skips pricing a token whose amount is 0.
+    // Anyone can supply cbBTC collateral on the vault's behalf. Pricing cbBTC then reverts and blocks execute,
+    // withdraw and updateMarketsBalances for market 14, so a real vault sets the cbBTC price first.
     await publicClient.waitForTransactionReceipt({ hash: await fuseManager.writeContract({ address: vault, abi: vaultAbi, functionName: "grantMarketSubstrates", args: [MORPHO_MARKET, [MORPHO_BLUE_MARKET_ID]] }) });
 
     assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "isFuseSupported", args: [MORPHO_SUPPLY_FUSE] }), true);

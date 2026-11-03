@@ -30,7 +30,7 @@ const GUARDIAN = "0x976EA74026E726554dB657fA54763abd0C3a0aa9";
 const ONE_HOUR = 3600;
 
 // ABIs from ipor-abi (mainnet/mainnet-base-fusion/abis; IporFusionFactoryImpl and IporFusionAccessManagerBase at 55b2d9e,
-// PlasmaVaultBase at b942366): IporFusionFactory, PlasmaVault (with PlasmaVaultGovernance) and IporFusionAccessManager.
+// PlasmaVaultBase at b942366, IporFusionPlasmaVaultCoreBase at 55b2d9e): IporFusionFactory, PlasmaVault (with PlasmaVaultGovernance) and IporFusionAccessManager.
 const factoryAbi = parseAbi([
   "function clone(string assetName, string assetSymbol, address underlyingToken, uint256 redemptionDelayInSeconds, address owner, uint256 daoFeePackageIndex) returns (FusionInstance)",
   "struct FusionInstance { uint256 index; uint256 version; string assetName; string assetSymbol; uint8 assetDecimals; address underlyingToken; string underlyingTokenSymbol; uint8 underlyingTokenDecimals; address initialOwner; address plasmaVault; address plasmaVaultBase; address accessManager; address feeManager; address rewardsManager; address withdrawManager; address contextManager; address priceManager; }",
