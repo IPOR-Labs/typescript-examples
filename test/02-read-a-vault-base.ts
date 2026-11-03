@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { before, describe, it } from "node:test";
 import { network } from "hardhat";
-import { encodeFunctionData, erc20Abi, parseAbi, parseEther, parseEventLogs, parseUnits, pad, zeroAddress, type Address } from "viem";
+import { encodeFunctionData, erc20Abi, parseAbi, parseEther, parseEventLogs, parseUnits, pad, slice, isAddressEqual, zeroAddress, type Address } from "viem";
 
 // Base addresses, from ipor-abi on main: mainnet/mainnet-base-fusion/addresses.json (factory, Aave V3 fuses),
 // mainnet/addresses.json (BalanceFuseErc20) and README.md (USDC).
@@ -42,7 +42,11 @@ const BALANCE_UPDATER = "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc";
 // ABIs from ipor-abi on main: IporFusionFactory, PlasmaVault (with PlasmaVaultGovernance), IporFusionAccessManager,
 // AaveV3SupplyFuse and PriceOracleMiddleware.
 const factoryAbi = parseAbi([
-  "function clone(string assetName, string assetSymbol, address underlyingToken, uint256 redemptionDelayInSeconds, address owner, uint256 daoFeePackageIndex) returns (uint256)",
+  "function clone(string assetName, string assetSymbol, address underlyingToken, uint256 redemptionDelayInSeconds, address owner, uint256 daoFeePackageIndex) returns (FusionInstance)",
+  "struct FusionInstance { uint256 index; uint256 version; string assetName; string assetSymbol; uint8 assetDecimals; address underlyingToken; string underlyingTokenSymbol; uint8 underlyingTokenDecimals; address initialOwner; address plasmaVault; address plasmaVaultBase; address accessManager; address feeManager; address rewardsManager; address withdrawManager; address contextManager; address priceManager; }",
+  "error InvalidUnderlyingToken()",
+  "error InvalidOwner()",
+  "error DaoFeePackageIndexOutOfBounds(uint256 index, uint256 length)",
   "event FusionInstanceCreated(uint256 index, uint256 version, string assetName, string assetSymbol, uint8 assetDecimals, address underlyingToken, string underlyingTokenSymbol, uint8 underlyingTokenDecimals, address initialOwner, address plasmaVault, address plasmaVaultBase, address feeManager)",
 ]);
 const vaultAbi = parseAbi([
@@ -54,6 +58,7 @@ const vaultAbi = parseAbi([
   "function updateDependencyBalanceGraphs(uint256[] marketIds, uint256[][] dependencies)",
   "function convertToPublicVault()",
   "function deposit(uint256 assets, address receiver) returns (uint256)",
+  "error NoAssetsToDeposit()",
   "function execute(FuseAction[] calls)",
   "function updateMarketsBalances(uint256[] marketIds) returns (uint256)",
   "function getFuses() view returns (address[])",
@@ -91,10 +96,9 @@ describe("S2 Read a USDC vault on Aave V3", () => {
   let fuses: readonly Address[], marketIds: bigint[], totalAssets: bigint, assetPrice: bigint, priceDecimals: bigint;
 
   before(async () => {
-    for (const account of [OWNER, ATOMIST, FUSE_MANAGER, ALPHA, DEPOSITOR, BALANCE_UPDATER, USDC_WHALE]) {
-      await networkHelpers.impersonateAccount(account);
-      await networkHelpers.setBalance(account, parseEther("1"));
-    }
+    // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
+    await networkHelpers.impersonateAccount(USDC_WHALE);
+    await networkHelpers.setBalance(USDC_WHALE, parseEther("1"));
     const whale = await viem.getWalletClient(USDC_WHALE);
     await whale.writeContract({ address: USDC, abi: erc20Abi, functionName: "transfer", args: [DEPOSITOR, usdc("1000")] });
   });
@@ -135,7 +139,9 @@ describe("S2 Read a USDC vault on Aave V3", () => {
   it("04 reads the vault's fuses", async () => {
     fuses = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getFuses" });
 
-    assert.deepEqual(fuses, [BURN_REQUEST_FEE_FUSE, AAVE_V3_SUPPLY_FUSE]);
+    const expected: Address[] = [BURN_REQUEST_FEE_FUSE, AAVE_V3_SUPPLY_FUSE];
+    assert.equal(fuses.length, expected.length);
+    expected.forEach((fuse, i) => assert.ok(isAddressEqual(fuses[i], fuse), `fuse ${i}: ${fuses[i]}`));
   });
 
   it("05 reads each fuse's market ID", async () => {
@@ -149,8 +155,9 @@ describe("S2 Read a USDC vault on Aave V3", () => {
   it("06 reads the Aave V3 market's substrates", async () => {
     const substrates = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getMarketSubstrates", args: [AAVE_V3_MARKET] });
 
-    // The getter returns lowercase hex: USDC left-padded to 32 bytes.
-    assert.deepEqual(substrates, [pad(USDC, { size: 32 }).toLowerCase()]);
+    // A substrate is an address left-padded to 32 bytes, so its last 20 bytes are the address.
+    assert.equal(substrates.length, 1);
+    assert.ok(isAddressEqual(slice(substrates[0], 12), USDC));
   });
 
   it("07 reads the price oracle middleware", async () => {
@@ -167,9 +174,7 @@ describe("S2 Read a USDC vault on Aave V3", () => {
   });
 
   it("09 refreshes market balances with role 1000, then reads total assets", async () => {
-    // updateMarketsBalances is restricted to UPDATE_MARKETS_BALANCES_ROLE (ipor-fusion contracts/vaults/PlasmaVault.sol:408).
-    // The old example called it through multicall from an account without the role, so it failed silently
-    // and totalAssets was the stale stored value.
+    // updateMarketsBalances is restricted to UPDATE_MARKETS_BALANCES_ROLE (see PlasmaVault.updateMarketsBalances).
     await networkHelpers.time.increase(30 * 24 * 60 * 60);
     const before = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalAssets" });
     await assert.rejects(

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { before, describe, it } from "node:test";
 import { network } from "hardhat";
-import { parseAbi, parseEther, parseEventLogs, pad, toFunctionSelector, zeroAddress, type Address } from "viem";
+import { parseAbi,parseEventLogs, pad, toFunctionSelector, isAddressEqual, zeroAddress, type Address } from "viem";
 
 // Base addresses, from ipor-abi on main: mainnet/mainnet-base-fusion/addresses.json (factory, Aave V3 fuses),
 // mainnet/addresses.json (BalanceFuseErc20) and README.md (USDC).
@@ -34,7 +34,11 @@ const ALPHA = "0x90F79bf6EB2c4f870365E785982E1f101E93b906";
 
 // ABIs from ipor-abi on main: IporFusionFactory, PlasmaVault (with PlasmaVaultGovernance) and IporFusionAccessManager.
 const factoryAbi = parseAbi([
-  "function clone(string assetName, string assetSymbol, address underlyingToken, uint256 redemptionDelayInSeconds, address owner, uint256 daoFeePackageIndex) returns (uint256)",
+  "function clone(string assetName, string assetSymbol, address underlyingToken, uint256 redemptionDelayInSeconds, address owner, uint256 daoFeePackageIndex) returns (FusionInstance)",
+  "struct FusionInstance { uint256 index; uint256 version; string assetName; string assetSymbol; uint8 assetDecimals; address underlyingToken; string underlyingTokenSymbol; uint8 underlyingTokenDecimals; address initialOwner; address plasmaVault; address plasmaVaultBase; address accessManager; address feeManager; address rewardsManager; address withdrawManager; address contextManager; address priceManager; }",
+  "error InvalidUnderlyingToken()",
+  "error InvalidOwner()",
+  "error DaoFeePackageIndexOutOfBounds(uint256 index, uint256 length)",
   "event FusionInstanceCreated(uint256 index, uint256 version, string assetName, string assetSymbol, uint8 assetDecimals, address underlyingToken, string underlyingTokenSymbol, uint8 underlyingTokenDecimals, address initialOwner, address plasmaVault, address plasmaVaultBase, address feeManager)",
 ]);
 const vaultAbi = parseAbi([
@@ -59,7 +63,7 @@ const accessManagerAbi = parseAbi([
   "error TooShortExecutionDelayForRole(uint64 roleId, uint32 executionDelay)",
 ]);
 
-const { viem, networkHelpers } = await network.create("base");
+const { viem } =await network.create("base");
 const publicClient = await viem.getPublicClient();
 const owner = await viem.getWalletClient(OWNER);
 const atomist = await viem.getWalletClient(ATOMIST);
@@ -72,13 +76,6 @@ describe("S1 Create and configure a USDC vault on Aave V3", () => {
     return isMember;
   };
 
-  before(async () => {
-    for (const account of [OWNER, ATOMIST, FUSE_MANAGER, ALPHA]) {
-      await networkHelpers.impersonateAccount(account);
-      await networkHelpers.setBalance(account, parseEther("1"));
-    }
-  });
-
   it("01 clones a vault from the factory and reads the created addresses from the receipt", async () => {
     // Arguments: share name and symbol, underlying token, redemption delay, owner, DAO fee package.
     const hash = await owner.writeContract({ address: FACTORY, abi: factoryAbi, functionName: "clone", args: ["Story USDC", "sUSDC", USDC, 0n, OWNER, 0n] });
@@ -89,7 +86,7 @@ describe("S1 Create and configure a USDC vault on Aave V3", () => {
 
     assert.notEqual(vault, zeroAddress);
     assert.notEqual(created.args.feeManager, zeroAddress);
-    assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "asset" }), USDC);
+    assert.ok(isAddressEqual(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "asset" }), USDC));
     assert.equal(await hasRole(OWNER_ROLE, OWNER), true);
   });
 
@@ -119,16 +116,16 @@ describe("S1 Create and configure a USDC vault on Aave V3", () => {
     const usdcSubstrate = pad(USDC, { size: 32 });
     await fuseManager.writeContract({ address: vault, abi: vaultAbi, functionName: "grantMarketSubstrates", args: [AAVE_V3_MARKET, [usdcSubstrate]] });
     await fuseManager.writeContract({ address: vault, abi: vaultAbi, functionName: "grantMarketSubstrates", args: [ERC20_VAULT_BALANCE_MARKET, [usdcSubstrate]] });
-    // Supplying to Aave V3 moves USDC out of the vault, so the vault's ERC20 balance must update with it.
+    // The ERC20 balance market values the vault's other tokens. Its fuse skips the underlying asset (USDC here): idle USDC is counted directly in totalAssets.
+    // The dependency makes the vault refresh the ERC20 balance market whenever the Aave V3 market balance is updated.
     await fuseManager.writeContract({ address: vault, abi: vaultAbi, functionName: "updateDependencyBalanceGraphs", args: [[AAVE_V3_MARKET], [[ERC20_VAULT_BALANCE_MARKET]]] });
 
-    const read = { address: vault, abi: vaultAbi } as const;
-    assert.equal(await publicClient.readContract({ ...read, functionName: "isFuseSupported", args: [AAVE_V3_SUPPLY_FUSE] }), true);
-    assert.equal(await publicClient.readContract({ ...read, functionName: "isBalanceFuseSupported", args: [AAVE_V3_MARKET, AAVE_V3_BALANCE_FUSE] }), true);
-    assert.equal(await publicClient.readContract({ ...read, functionName: "isBalanceFuseSupported", args: [ERC20_VAULT_BALANCE_MARKET, ERC20_BALANCE_FUSE] }), true);
-    assert.equal(await publicClient.readContract({ ...read, functionName: "isMarketSubstrateGranted", args: [AAVE_V3_MARKET, usdcSubstrate] }), true);
-    assert.equal(await publicClient.readContract({ ...read, functionName: "isMarketSubstrateGranted", args: [ERC20_VAULT_BALANCE_MARKET, usdcSubstrate] }), true);
-    assert.deepEqual(await publicClient.readContract({ ...read, functionName: "getDependencyBalanceGraph", args: [AAVE_V3_MARKET] }), [ERC20_VAULT_BALANCE_MARKET]);
+    assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "isFuseSupported", args: [AAVE_V3_SUPPLY_FUSE] }), true);
+    assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "isBalanceFuseSupported", args: [AAVE_V3_MARKET, AAVE_V3_BALANCE_FUSE] }), true);
+    assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "isBalanceFuseSupported", args: [ERC20_VAULT_BALANCE_MARKET, ERC20_BALANCE_FUSE] }), true);
+    assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "isMarketSubstrateGranted", args: [AAVE_V3_MARKET, usdcSubstrate] }), true);
+    assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "isMarketSubstrateGranted", args: [ERC20_VAULT_BALANCE_MARKET, usdcSubstrate] }), true);
+    assert.deepEqual(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getDependencyBalanceGraph", args: [AAVE_V3_MARKET] }), [ERC20_VAULT_BALANCE_MARKET]);
   });
 
   it("05 the Atomist opens deposits to everyone", async () => {
