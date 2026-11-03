@@ -8,16 +8,30 @@
 import assert from "node:assert/strict";
 import { before, describe, it } from "node:test";
 import { network } from "hardhat";
-import { erc20Abi, parseAbi, parseEther, parseEventLogs, parseUnits, type Address } from "viem";
+import { erc20Abi, maxUint256, parseEther, parseEventLogs, parseUnits, toFunctionSelector, type Address } from "viem";
+import { accessManagerAbi } from "../abis/accessManager.abi.ts";
+import { factoryAbi } from "../abis/factory.abi.ts";
+import { factoryFeeAbi } from "../abis/factoryFee.abi.ts";
+import { feeManagerAbi } from "../abis/feeManager.abi.ts";
+import { vaultAbi } from "../abis/vault.abi.ts";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory) and README.md (USDC).
 const FACTORY = "0x1455717668fA96534f675856347A973fA907e922";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+// USDC has 6 decimals.
+const USDC_DECIMALS = 6;
+// Vault shares have the asset's decimals plus 2.
+const VAULT_SHARE_DECIMALS = 8;
+const VAULT_NAME = "Story USDC";
+const VAULT_SYMBOL = "sUSDC";
+const REDEMPTION_DELAY = 0n;
+const DAO_FEE_PACKAGE_INDEX = 0n;
 // An EOA holding about 158.3M USDC at the fork block, used to fund the depositor.
 const USDC_WHALE = "0x8da91A6298eA5d1A8Bc985e99798fd0A0f05701a";
 
 // Role IDs from Roles.sol (ipor-fusion 4fdaf50).
 const ATOMIST_ROLE = 100n;
+const PUBLIC_ROLE = 2n ** 64n - 1n;
 
 // Hardhat's default accounts. The fee recipient, the harvester and the share receiver hold no role.
 const OWNER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
@@ -27,63 +41,22 @@ const FEE_RECIPIENT = "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc";
 const HARVESTER = "0x976EA74026E726554dB657fA54763abd0C3a0aa9";
 const SHARE_RECEIVER = "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955";
 
-// ABIs from ipor-abi (mainnet/mainnet-base-fusion/abis): IporFusionFactoryImpl and IporFusionAccessManagerBase at 55b2d9e,
-// PlasmaVaultBase at b942366, IporFusionPlasmaVaultCoreBase at 55b2d9e.
-const factoryAbi = parseAbi([
-  "function clone(string assetName, string assetSymbol, address underlyingToken, uint256 redemptionDelayInSeconds, address owner, uint256 daoFeePackageIndex) returns (FusionInstance)",
-  "struct FusionInstance { uint256 index; uint256 version; string assetName; string assetSymbol; uint8 assetDecimals; address underlyingToken; string underlyingTokenSymbol; uint8 underlyingTokenDecimals; address initialOwner; address plasmaVault; address plasmaVaultBase; address accessManager; address feeManager; address rewardsManager; address withdrawManager; address contextManager; address priceManager; }",
-  "error InvalidUnderlyingToken()",
-  "error InvalidOwner()",
-  "error DaoFeePackageIndexOutOfBounds(uint256 index, uint256 length)",
-  "event FusionInstanceCreated(uint256 index, uint256 version, string assetName, string assetSymbol, uint8 assetDecimals, address underlyingToken, string underlyingTokenSymbol, uint8 underlyingTokenDecimals, address initialOwner, address plasmaVault, address plasmaVaultBase, address feeManager)",
-]);
-// Written by hand: ipor-abi's Base folder has no getDaoFeePackages. Source: ipor-fusion 004d054,
-// contracts/factory/FusionFactory.sol (getDaoFeePackages) and contracts/factory/lib/FusionFactoryStorageLib.sol (FeePackage).
-const factoryFeeAbi = parseAbi([
-  "struct FeePackage { uint256 managementFee; uint256 performanceFee; address feeRecipient; }",
-  "function getDaoFeePackages() view returns (FeePackage[])",
-]);
-const vaultAbi = parseAbi([
-  "function getAccessManagerAddress() view returns (address)",
-  "function convertToPublicVault()",
-  "function deposit(uint256 assets, address receiver) returns (uint256)",
-  "function withdraw(uint256 assets, address receiver, address owner) returns (uint256)",
-  "function balanceOf(address account) view returns (uint256)",
-  "function totalSupply() view returns (uint256)",
-  "function transfer(address to, uint256 value) returns (bool)",
-  "function getUnrealizedManagementFee() view returns (uint256)",
-  "function maxDeposit(address receiver) view returns (uint256)",
-  "function setTotalSupplyCap(uint256 cap)",
-  "function enableTransferShares()",
-  "error AccessManagedUnauthorized(address caller)",
-  "error ERC4626ExceededMaxDeposit(address receiver, uint256 assets, uint256 max)",
-  "error WrongValue()",
-]);
-const accessManagerAbi = parseAbi([
-  "function grantRole(uint64 roleId, address account, uint32 executionDelay)",
-  "error AccessManagerUnauthorizedAccount(address msgsender, uint64 roleId)",
-]);
-// From ipor-abi: mainnet/mainnet-base/abis/pretty/IporPlasmaVaultFeeManagerWstETH.abi.sol at 59444e2 (functions and RecipientFee).
-// The fee errors come from mainnet/mainnet-base-fusion/abis/pretty/PlasmaVaultBase.abi.sol at b942366 (raised by the vault and bubbled up).
-const feeManagerAbi = parseAbi([
-  "struct RecipientFee { address recipient; uint256 feeValue; }",
-  "function updateManagementFee(RecipientFee[] recipientFees)",
-  "function updatePerformanceFee(RecipientFee[] recipientFees)",
-  "function getTotalManagementFee() view returns (uint256)",
-  "function getTotalPerformanceFee() view returns (uint256)",
-  "function getIporDaoFeeRecipientAddress() view returns (address)",
-  "function harvestAllFees()",
-  "function MANAGEMENT_FEE_ACCOUNT() view returns (address)",
-  "function PERFORMANCE_FEE_ACCOUNT() view returns (address)",
-  "error InvalidManagementFee(uint256 feeInPercentage)",
-  "error InvalidPerformanceFee(uint256 feeInPercentage)",
-  "error AccessManagedUnauthorized(address caller)",
-]);
-
-const usdc = (amount: string) => parseUnits(amount, 6);
 // Shares have 8 decimals: USDC's 6 plus the vault's offset of 2.
-const shares = (amount: string) => parseUnits(amount, 8);
 const ONE_YEAR = 365 * 24 * 60 * 60;
+
+const DEPOSIT_SELECTOR = toFunctionSelector("deposit(uint256,address)");
+// grantRole: the grant takes effect without an execution delay.
+const NO_EXECUTION_DELAY = 0;
+const MANAGEMENT_FEE_BPS = 200n;
+const PERFORMANCE_FEE_BPS = 1000n;
+const OVER_LIMIT_MANAGEMENT_FEE_BPS = 600n;
+const amount2000Usdc = parseUnits("2000", USDC_DECIMALS);
+const amount1000Usdc = parseUnits("1000", USDC_DECIMALS);
+const amount100Usdc = parseUnits("100", USDC_DECIMALS);
+const amount1Usdc = parseUnits("1", USDC_DECIMALS);
+const amount50Shares = parseUnits("50", VAULT_SHARE_DECIMALS);
+
+const amount10Shares = parseUnits("10", VAULT_SHARE_DECIMALS);
 
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
@@ -94,7 +67,6 @@ const harvester = await viem.getWalletClient(HARVESTER);
 
 describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () => {
   let vault: Address, feeManager: Address;
-  const shareBalance = (account: Address) => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "balanceOf", args: [account] });
 
   before(async () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
@@ -102,123 +74,467 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
     // Gives the whale ETH to pay gas for its USDC transfer.
     await networkHelpers.setBalance(USDC_WHALE, parseEther("1"));
     const whale = await viem.getWalletClient(USDC_WHALE);
-    await publicClient.waitForTransactionReceipt({ hash: await whale.writeContract({ address: USDC, abi: erc20Abi, functionName: "transfer", args: [DEPOSITOR, usdc("2000")] }) });
+    await whale.writeContract({
+      address: USDC,
+      abi: erc20Abi,
+      functionName: "transfer",
+      args: [DEPOSITOR, amount2000Usdc],
+    });
   });
 
   it("01 clones a vault on DAO fee package 0, grants Atomist, goes public and takes a deposit, as in S1", async () => {
     // The last clone argument picks the DAO fee package by index.
-    const hash = await owner.writeContract({ address: FACTORY, abi: factoryAbi, functionName: "clone", args: ["Story USDC", "sUSDC", USDC, 0n, OWNER, 0n] });
+    const hash = await owner.writeContract({
+      address: FACTORY,
+      abi: factoryAbi,
+      functionName: "clone",
+      args: [
+        VAULT_NAME,
+        VAULT_SYMBOL,
+        USDC,
+        REDEMPTION_DELAY,
+        OWNER,
+        DAO_FEE_PACKAGE_INDEX,
+      ],
+    });
     const { logs } = await publicClient.waitForTransactionReceipt({ hash });
     const [created] = parseEventLogs({ abi: factoryAbi, logs, eventName: "FusionInstanceCreated" });
     assert.ok(created, "the receipt has no FusionInstanceCreated event");
     vault = created.args.plasmaVault;
     feeManager = created.args.feeManager;
-    const accessManager = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getAccessManagerAddress" });
+    const accessManager = await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "getAccessManagerAddress",
+    });
+    const [[atomistHadRole], depositRoleBefore] = await Promise.all([
+      publicClient.readContract({
+        address: accessManager,
+        abi: accessManagerAbi,
+        functionName: "hasRole",
+        args: [ATOMIST_ROLE, ATOMIST],
+      }),
+      publicClient.readContract({
+        address: accessManager,
+        abi: accessManagerAbi,
+        functionName: "getTargetFunctionRole",
+        args: [vault, DEPOSIT_SELECTOR],
+      }),
+    ]);
+    assert.equal(atomistHadRole, false);
+    assert.notEqual(depositRoleBefore, PUBLIC_ROLE);
+    const [depositorAllowance, depositorSharesBefore] = await Promise.all([
+      publicClient.readContract({
+        address: USDC,
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [DEPOSITOR, vault],
+      }),
+      publicClient.readContract({
+        address: vault,
+        abi: vaultAbi,
+        functionName: "balanceOf",
+        args: [DEPOSITOR],
+      }),
+    ]);
+    assert.equal(depositorAllowance, 0n);
+    assert.equal(depositorSharesBefore, 0n);
     // On the access manager: the Atomist unlocks the fee, supply cap and transfer settings below.
-    await publicClient.waitForTransactionReceipt({ hash: await owner.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [ATOMIST_ROLE, ATOMIST, 0] }) });
-    await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: vault, abi: vaultAbi, functionName: "convertToPublicVault" }) });
-    await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: USDC, abi: erc20Abi, functionName: "approve", args: [vault, usdc("2000")] }) });
-    await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "deposit", args: [usdc("1000"), DEPOSITOR] }) });
+    await owner.writeContract({
+      address: accessManager,
+      abi: accessManagerAbi,
+      functionName: "grantRole",
+      args: [ATOMIST_ROLE, ATOMIST, NO_EXECUTION_DELAY],
+    });
+    await atomist.writeContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "convertToPublicVault",
+    });
+    await depositor.writeContract({
+      address: USDC,
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [vault, amount2000Usdc],
+    });
+    await depositor.writeContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "deposit",
+      args: [amount1000Usdc, DEPOSITOR],
+    });
 
-    assert.ok((await shareBalance(DEPOSITOR)) > 0n);
+    const [depositorShares, [atomistHasRole], depositRole] = await Promise.all([
+      publicClient.readContract({
+        address: vault,
+        abi: vaultAbi,
+        functionName: "balanceOf",
+        args: [DEPOSITOR],
+      }),
+      publicClient.readContract({
+        address: accessManager,
+        abi: accessManagerAbi,
+        functionName: "hasRole",
+        args: [ATOMIST_ROLE, ATOMIST],
+      }),
+      publicClient.readContract({
+        address: accessManager,
+        abi: accessManagerAbi,
+        functionName: "getTargetFunctionRole",
+        args: [vault, DEPOSIT_SELECTOR],
+      }),
+    ]);
+    assert.ok(depositorShares > 0n);
+    assert.equal(atomistHasRole, true);
+    assert.equal(depositRole, PUBLIC_ROLE);
+    // The deposit spent 1000 of the 2000 USDC approved.
+    assert.equal(await publicClient.readContract({
+      address: USDC,
+      abi: erc20Abi,
+      functionName: "allowance",
+      args: [DEPOSITOR, vault],
+    }), amount1000Usdc);
   });
 
   it("02 reads the DAO fee package the vault was cloned with", async () => {
     // Fees are in basis points: 10000 = 100%. The DAO takes its share before any fee the Atomist sets.
-    const [package0] = await publicClient.readContract({ address: FACTORY, abi: factoryFeeAbi, functionName: "getDaoFeePackages" });
+    const [package0] = await publicClient.readContract({
+      address: FACTORY,
+      abi: factoryFeeAbi,
+      functionName: "getDaoFeePackages",
+    });
     assert.ok(package0, "the factory has no DAO fee package");
     assert.equal(package0.managementFee, 5n);
     assert.equal(package0.performanceFee, 1000n);
-    assert.equal(await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "getTotalManagementFee" }), 5n);
-    assert.equal(await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "getTotalPerformanceFee" }), 1000n);
+    const [totalManagementFee, totalPerformanceFee] = await Promise.all([
+      publicClient.readContract({
+        address: feeManager,
+        abi: feeManagerAbi,
+        functionName: "getTotalManagementFee",
+      }),
+      publicClient.readContract({
+        address: feeManager,
+        abi: feeManagerAbi,
+        functionName: "getTotalPerformanceFee",
+      }),
+    ]);
+    assert.equal(totalManagementFee, 5n);
+    assert.equal(totalPerformanceFee, 1000n);
   });
 
   it("03 the Atomist sets a 200 bps management and 1000 bps performance fee for a recipient", async () => {
     // Each call replaces the whole recipient list. It harvests only the fees already realized as shares in the fee account.
     // The fee accrued since the last realization goes to the new recipients, unless a deposit or withdraw realizes it first.
-    await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: feeManager, abi: feeManagerAbi, functionName: "updateManagementFee", args: [[{ recipient: FEE_RECIPIENT, feeValue: 200n }]] }) });
-    await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: feeManager, abi: feeManagerAbi, functionName: "updatePerformanceFee", args: [[{ recipient: FEE_RECIPIENT, feeValue: 1000n }]] }) });
+    const [totalManagementFeeBefore, totalPerformanceFeeBefore] = await Promise.all([
+      publicClient.readContract({
+        address: feeManager,
+        abi: feeManagerAbi,
+        functionName: "getTotalManagementFee",
+      }),
+      publicClient.readContract({
+        address: feeManager,
+        abi: feeManagerAbi,
+        functionName: "getTotalPerformanceFee",
+      }),
+    ]);
+    assert.equal(totalManagementFeeBefore, 5n);
+    assert.equal(totalPerformanceFeeBefore, 1000n);
+    await atomist.writeContract({
+      address: feeManager,
+      abi: feeManagerAbi,
+      functionName: "updateManagementFee",
+      args: [[{ recipient: FEE_RECIPIENT, feeValue: MANAGEMENT_FEE_BPS }]],
+    });
+    await atomist.writeContract({
+      address: feeManager,
+      abi: feeManagerAbi,
+      functionName: "updatePerformanceFee",
+      args: [[{ recipient: FEE_RECIPIENT, feeValue: PERFORMANCE_FEE_BPS }]],
+    });
 
     // The totals add the DAO fee: 5 + 200 and 1000 + 1000.
-    assert.equal(await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "getTotalManagementFee" }), 205n);
-    assert.equal(await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "getTotalPerformanceFee" }), 2000n);
+    const [totalManagementFee, totalPerformanceFee] = await Promise.all([
+      publicClient.readContract({
+        address: feeManager,
+        abi: feeManagerAbi,
+        functionName: "getTotalManagementFee",
+      }),
+      publicClient.readContract({
+        address: feeManager,
+        abi: feeManagerAbi,
+        functionName: "getTotalPerformanceFee",
+      }),
+    ]);
+    assert.equal(totalManagementFee, 205n);
+    assert.equal(totalPerformanceFee, 2000n);
     await assert.rejects(
       // Expected to revert: the 500 bps management limit (5000 for performance) counts the DAO fee, so 600 + 5 = 605.
-      atomist.writeContract({ address: feeManager, abi: feeManagerAbi, functionName: "updateManagementFee", args: [[{ recipient: FEE_RECIPIENT, feeValue: 600n }]] }),
+      atomist.writeContract({
+        address: feeManager,
+        abi: feeManagerAbi,
+        functionName: "updateManagementFee",
+        args: [[{ recipient: FEE_RECIPIENT, feeValue: OVER_LIMIT_MANAGEMENT_FEE_BPS }]],
+      }),
       /InvalidManagementFee.*605/s,
     );
   });
 
   it("04 the management fee accrues over a year and a deposit mints it as fee shares", async () => {
-    const managementFeeAccount = await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "MANAGEMENT_FEE_ACCOUNT" });
-    const sharesBefore = await shareBalance(managementFeeAccount);
+    const managementFeeAccount = await publicClient.readContract({
+      address: feeManager,
+      abi: feeManagerAbi,
+      functionName: "MANAGEMENT_FEE_ACCOUNT",
+    });
+    const sharesBefore = await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "balanceOf",
+      args: [managementFeeAccount],
+    });
     await networkHelpers.time.increase(ONE_YEAR);
 
     // In USDC, before any fee share exists. Deposit, mint, withdraw and redeem realize it.
-    assert.ok((await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getUnrealizedManagementFee" })) > 0n);
-    await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "deposit", args: [usdc("100"), DEPOSITOR] }) });
-
-    assert.ok((await shareBalance(managementFeeAccount)) > sharesBefore);
-    assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getUnrealizedManagementFee" }), 0n);
+    assert.ok((await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "getUnrealizedManagementFee",
+    })) > 0n);
+    await depositor.writeContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "deposit",
+      args: [amount100Usdc, DEPOSITOR],
+    });
+    const [managementFeeAccountShares, unrealizedManagementFee] = await Promise.all([
+      publicClient.readContract({
+        address: vault,
+        abi: vaultAbi,
+        functionName: "balanceOf",
+        args: [managementFeeAccount],
+      }),
+      publicClient.readContract({
+        address: vault,
+        abi: vaultAbi,
+        functionName: "getUnrealizedManagementFee",
+      }),
+    ]);
+    assert.ok(managementFeeAccountShares > sharesBefore);
+    assert.equal(unrealizedManagementFee, 0n);
   });
 
   it("05 a gain above the high-water mark mints the performance fee on a withdraw", async () => {
-    const performanceFeeAccount = await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "PERFORMANCE_FEE_ACCOUNT" });
-    const sharesBefore = await shareBalance(performanceFeeAccount);
+    const performanceFeeAccount = await publicClient.readContract({
+      address: feeManager,
+      abi: feeManagerAbi,
+      functionName: "PERFORMANCE_FEE_ACCOUNT",
+    });
+    const sharesBefore = await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "balanceOf",
+      args: [performanceFeeAccount],
+    });
     // A USDC donation to the vault stands in for a gain. Real gains come from markets (S7).
-    await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: USDC, abi: erc20Abi, functionName: "transfer", args: [vault, usdc("100")] }) });
+    const idleBefore = await publicClient.readContract({
+      address: USDC,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [vault],
+    });
+    await depositor.writeContract({
+      address: USDC,
+      abi: erc20Abi,
+      functionName: "transfer",
+      args: [vault, amount100Usdc],
+    });
+    const idleAfterDonation = await publicClient.readContract({
+      address: USDC,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [vault],
+    });
+    assert.equal(idleAfterDonation - idleBefore, amount100Usdc);
     // Withdraw, redeem, execute and updateMarketsBalances realize the performance fee. A deposit does not.
-    await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "withdraw", args: [usdc("1"), DEPOSITOR, DEPOSITOR] }) });
+    await depositor.writeContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "withdraw",
+      args: [amount1Usdc, DEPOSITOR, DEPOSITOR],
+    });
 
-    assert.ok((await shareBalance(performanceFeeAccount)) > sharesBefore);
+    const performanceFeeAccountShares = await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "balanceOf",
+      args: [performanceFeeAccount],
+    });
+    assert.ok(performanceFeeAccountShares > sharesBefore);
   });
 
   it("06 an account with no role harvests the fees to the recipient and the DAO", async () => {
-    const dao = await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "getIporDaoFeeRecipientAddress" });
-    const recipientBefore = await shareBalance(FEE_RECIPIENT);
-    const daoBefore = await shareBalance(dao);
-    const managementFeeAccount = await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "MANAGEMENT_FEE_ACCOUNT" });
-    const performanceFeeAccount = await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "PERFORMANCE_FEE_ACCOUNT" });
-    const supplyBefore = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalSupply" });
+    const [dao, recipientBefore] = await Promise.all([
+      publicClient.readContract({
+        address: feeManager,
+        abi: feeManagerAbi,
+        functionName: "getIporDaoFeeRecipientAddress",
+      }),
+      publicClient.readContract({
+        address: vault,
+        abi: vaultAbi,
+        functionName: "balanceOf",
+        args: [FEE_RECIPIENT],
+      }),
+    ]);
+    const [daoBefore, managementFeeAccount, performanceFeeAccount, supplyBefore] = await Promise.all([
+      publicClient.readContract({
+        address: vault,
+        abi: vaultAbi,
+        functionName: "balanceOf",
+        args: [dao],
+      }),
+      publicClient.readContract({
+        address: feeManager,
+        abi: feeManagerAbi,
+        functionName: "MANAGEMENT_FEE_ACCOUNT",
+      }),
+      publicClient.readContract({
+        address: feeManager,
+        abi: feeManagerAbi,
+        functionName: "PERFORMANCE_FEE_ACCOUNT",
+      }),
+      publicClient.readContract({
+        address: vault,
+        abi: vaultAbi,
+        functionName: "totalSupply",
+      }),
+    ]);
     // harvestAllFees has no role, so a keeper can automate it. It moves shares out of the fee accounts and mints nothing.
     // The fee manager moves them, and it is the only holder of the share transfer role, so this works before enableTransferShares.
-    await publicClient.waitForTransactionReceipt({ hash: await harvester.writeContract({ address: feeManager, abi: feeManagerAbi, functionName: "harvestAllFees" }) });
+    await harvester.writeContract({
+      address: feeManager,
+      abi: feeManagerAbi,
+      functionName: "harvestAllFees",
+    });
 
-    assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalSupply" }), supplyBefore);
+    const [performanceFeeAccountShares, feeRecipientShares, daoShares] = await Promise.all([
+      publicClient.readContract({
+        address: vault,
+        abi: vaultAbi,
+        functionName: "balanceOf",
+        args: [performanceFeeAccount],
+      }),
+      publicClient.readContract({
+        address: vault,
+        abi: vaultAbi,
+        functionName: "balanceOf",
+        args: [FEE_RECIPIENT],
+      }),
+      publicClient.readContract({
+        address: vault,
+        abi: vaultAbi,
+        functionName: "balanceOf",
+        args: [dao],
+      }),
+    ]);
+    assert.equal(await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "totalSupply",
+    }), supplyBefore);
     // The recipient shares round down, so a few wei of shares (22 here) stay in a fee account.
-    assert.ok((await shareBalance(managementFeeAccount)) < 100n);
-    assert.ok((await shareBalance(performanceFeeAccount)) < 100n);
-    assert.ok((await shareBalance(FEE_RECIPIENT)) > recipientBefore);
-    assert.ok((await shareBalance(dao)) > daoBefore);
+    const managementFeeAccountShares = await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "balanceOf",
+      args: [managementFeeAccount],
+    });
+    assert.ok(managementFeeAccountShares < 100n);
+    assert.ok(performanceFeeAccountShares < 100n);
+    assert.ok(feeRecipientShares > recipientBefore);
+    assert.ok(daoShares > daoBefore);
   });
 
   it("07 the Atomist caps the supply in shares and a deposit above the room reverts", async () => {
     // The cap counts shares, with 8 decimals (USDC's 6 plus the vault's offset of 2). It defaults to the uint256 maximum.
-    const totalSupply = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalSupply" });
-    await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: vault, abi: vaultAbi, functionName: "setTotalSupplyCap", args: [totalSupply + shares("50")] }) });
+    const totalSupply = await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "totalSupply",
+    });
+    assert.equal(await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "getTotalSupplyCap",
+    }), maxUint256);
+    await atomist.writeContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "setTotalSupplyCap",
+      args: [totalSupply + amount50Shares],
+    });
+    assert.equal(await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "getTotalSupplyCap",
+    }), totalSupply + amount50Shares);
 
-    // maxDeposit gives the room left in assets, the value a deposit form should show.
-    const maxDeposit = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "maxDeposit", args: [DEPOSITOR] });
-    assert.ok(maxDeposit > 0n && maxDeposit < usdc("100"));
+    // maxDeposit gives the room left in assets, the value a deposit should show.
+    const maxDeposit = await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "maxDeposit",
+      args: [DEPOSITOR],
+    });
+    assert.ok(maxDeposit > 0n && maxDeposit < amount100Usdc);
     await assert.rejects(
       // Expected to revert: the deposit is 1 USDC over the room left.
-      depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "deposit", args: [maxDeposit + usdc("1"), DEPOSITOR] }),
+      depositor.writeContract({
+        address: vault,
+        abi: vaultAbi,
+        functionName: "deposit",
+        args: [maxDeposit + amount1Usdc, DEPOSITOR],
+      }),
       /ERC4626ExceededMaxDeposit/,
     );
   });
 
   it("08 share transfers are off until the Atomist enables them", async () => {
-    const amount = shares("10");
     await assert.rejects(
       // Expected to revert: a new vault restricts transfer and transferFrom to TECH_VAULT_TRANSFER_SHARES_ROLE (7).
       // Only the fee manager holds it, which is why step 06's harvest moves shares before enableTransferShares.
-      depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "transfer", args: [SHARE_RECEIVER, amount] }),
+      depositor.writeContract({
+        address: vault,
+        abi: vaultAbi,
+        functionName: "transfer",
+        args: [SHARE_RECEIVER, amount10Shares],
+      }),
       /AccessManagedUnauthorized/,
     );
     // Opens transfer and transferFrom to everyone. There is no call to turn them off again.
-    await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: vault, abi: vaultAbi, functionName: "enableTransferShares" }) });
-    await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "transfer", args: [SHARE_RECEIVER, amount] }) });
+    await atomist.writeContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "enableTransferShares",
+    });
+    assert.equal(await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "balanceOf",
+      args: [SHARE_RECEIVER],
+    }), 0n);
+    await depositor.writeContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "transfer",
+      args: [SHARE_RECEIVER, amount10Shares],
+    });
 
-    assert.equal(await shareBalance(SHARE_RECEIVER), amount);
+    const shareReceiverShares = await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "balanceOf",
+      args: [SHARE_RECEIVER],
+    });
+    assert.equal(shareReceiverShares, amount10Shares);
   });
 });

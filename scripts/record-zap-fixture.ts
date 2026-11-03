@@ -1,5 +1,5 @@
 // Records one aggregator quote (0.1 WETH to USDC, 50 bps, zap contract as executor)
-// into test/fixtures/<aggregator>-<chain>.json.
+// into test/fixtures/<aggregator>-<chain>-<amount-from>-weth-to-usdc-<block>.json.
 // Usage: node scripts/record-zap-fixture.ts <kyberswap|velora> <ethereum|base>
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -143,6 +143,6 @@ const fixture = {
 
 const dir = join(root, "test", "fixtures");
 mkdirSync(dir, { recursive: true });
-const file = join(dir, `${aggregator}-${chainName}.json`);
+const file = join(dir, `${aggregator}-${chainName}-${Number(AMOUNT_IN) / 1e18}-weth-to-usdc-${block}.json`);
 writeFileSync(file, JSON.stringify(fixture, null, 2) + "\n");
 console.log(`${file} block ${block}`);

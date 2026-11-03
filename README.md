@@ -36,9 +36,11 @@ Runnable [IPOR Fusion](https://ipor.io/) Plasma Vault stories in TypeScript and 
 ## How to read a story
 
 - Stories do not simulate transactions. A real app should simulate before each transaction.
+- The pre-flight reads in each story (balances, limits, previews, roles) exist to build a transparent UI: show the user what a transaction will do before they send it.
 - Read only the first failure. Later steps depend on earlier ones, so they cascade.
 - The factory installs `BurnRequestFeeFuseV2` in every clone, so `getFuses` returns it even on a fresh vault.
 - Zaps and referral deposits do not work on private vaults, because WHITELIST_ROLE is granted only to EOAs, never to a contract such as the zap or the referral wrapper.
-- S6 replays recorded aggregator routes at their pinned block. `node scripts/record-zap-fixture.ts <aggregator> <chain>` re-records one, then update its network's block in `hardhat.config.ts`. Both Ethereum fixtures must share one block: re-record them until they do, put that block in the `ethereum` network, and re-run S5 at that block. The Base fixture keeps its own `base-kyberswap` network.
+- S6 replays recorded aggregator routes at their pinned block. `node scripts/record-zap-fixture.ts <aggregator> <chain>` re-records one as `test/fixtures/<aggregator>-<chain>-<amount-from>-weth-to-usdc-<block>.json` (update the readers' file names), then update its network's block in `hardhat.config.ts`. Both Ethereum fixtures must share one block: re-record them until they do, put that block in the `ethereum` network, and re-run S5 at that block. The Base fixture keeps its own `base-kyberswap` network.
+- Every story is one file, except the ABIs: each hand-written ABI is a shared `abis/<name>.abi.ts` file (the union of the items the stories use) that the stories import.
 - ABIs and addresses come from the `ipor-abi` repository (`mainnet/mainnet-base-fusion` at `8b1be92`, `mainnet/addresses.json` at `e228075`).
 - The factory's `getDaoFeePackages` is not in ipor-abi's Base folder, so S10 writes it by hand from `ipor-fusion` at `004d054`, as its source comment names.

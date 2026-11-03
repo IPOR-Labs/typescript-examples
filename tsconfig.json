@@ -6,8 +6,9 @@
     "moduleResolution": "node16",
     "target": "es2022",
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["hardhat.config.ts", "test", "scripts"]
+  "include": ["hardhat.config.ts", "abis", "helpers", "test", "scripts"]
 }

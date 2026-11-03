@@ -1,6 +1,6 @@
 // S6 Aggregator zap on Base: swap WETH into a USDC vault in one zap transaction, from a recorded
-// KyberSwap route, then derive the numbers the deposit form previews.
-// It stands alone: step 01 repeats S1's setup in short, without a market. The form values every deposit shares are in S3.
+// KyberSwap route, then derive the numbers a deposit previews.
+// It stands alone: step 01 repeats S1's setup in short, without a market. The values every deposit shares are in S3.
 // Every step is a real transaction on a Base fork, and a step depends on the steps above it.
 // The routes are replayed from test/fixtures/, recorded at the fork block by scripts/record-zap-fixture.ts:
 // a live aggregator quote goes stale against a pinned fork.
@@ -10,17 +10,41 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { network } from "hardhat";
-import { encodeFunctionData, erc20Abi, maxUint256, parseAbi, parseEther, parseEventLogs, isAddressEqual, zeroAddress, type Address, type Hex } from "viem";
+import {
+  encodeFunctionData,
+  erc20Abi,
+  maxUint256,
+  parseEther,
+  parseEventLogs,
+  isAddressEqual,
+  toFunctionSelector,
+  zeroAddress,
+  type Address,
+  type Hex,
+} from "viem";
+import { previewValues } from "../helpers/aggregator-zap-preview.ts";
+import { accessManagerAbi } from "../abis/accessManager.abi.ts";
+import { allowanceAbi } from "../abis/allowance.abi.ts";
+import { factoryAbi } from "../abis/factory.abi.ts";
+import { priceOracleAbi } from "../abis/priceOracle.abi.ts";
+import { vaultAbi } from "../abis/vault.abi.ts";
+import { wethAbi } from "../abis/weth.abi.ts";
+import { zapAbi } from "../abis/zap.abi.ts";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory, zap)
 // and README.md at e228075 (USDC, WETH).
 const FACTORY = "0x1455717668fA96534f675856347A973fA907e922";
 const ZAP = "0xEbCf47837ad71Fc98d5B608356eaC1FF38fa67DB";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const VAULT_NAME = "Story USDC";
+const VAULT_SYMBOL = "sUSDC";
+const REDEMPTION_DELAY = 0n;
+const DAO_FEE_PACKAGE_INDEX = 0n;
 const WETH = "0x4200000000000000000000000000000000000006";
 
 // Role IDs from Roles.sol (ipor-fusion 4fdaf50).
 const ATOMIST_ROLE = 100n;
+const PUBLIC_ROLE = 2n ** 64n - 1n;
 
 // Hardhat's default accounts, one per role.
 const OWNER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
@@ -38,33 +62,16 @@ type Fixture = {
   router: { target: Address; approvalProxy: Address };
   calldata: Hex;
 };
-const readFixture = (name: string): Fixture => JSON.parse(readFileSync(new URL(`fixtures/${name}`, import.meta.url), "utf8"));
-const kyberswap = readFixture("kyberswap-base.json");
+const kyberswap: Fixture = JSON.parse(
+  readFileSync(new URL("fixtures/kyberswap-base-0.1-weth-to-usdc-53435674.json", import.meta.url), "utf8"),
+);
 
-// ABIs from ipor-abi (mainnet/mainnet-base-fusion/abis; IporFusionFactoryImpl and IporFusionAccessManagerBase,
-// PlasmaVaultBase, PriceOracleMiddleware). The zap ABI is the deployed ZapInData struct, without main's minSharesOut,
-// as in ipor-webapp packages/fusion-sdk/src/abi/erc4626-zap-in-with-native-token.abi.ts at 220fe2a0a.
-const factoryAbi = parseAbi([
-  "function clone(string assetName, string assetSymbol, address underlyingToken, uint256 redemptionDelayInSeconds, address owner, uint256 daoFeePackageIndex) returns (FusionInstance)",
-  "struct FusionInstance { uint256 index; uint256 version; string assetName; string assetSymbol; uint8 assetDecimals; address underlyingToken; string underlyingTokenSymbol; uint8 underlyingTokenDecimals; address initialOwner; address plasmaVault; address plasmaVaultBase; address accessManager; address feeManager; address rewardsManager; address withdrawManager; address contextManager; address priceManager; }",
-  "event FusionInstanceCreated(uint256 index, uint256 version, string assetName, string assetSymbol, uint8 assetDecimals, address underlyingToken, string underlyingTokenSymbol, uint8 underlyingTokenDecimals, address initialOwner, address plasmaVault, address plasmaVaultBase, address feeManager)",
-]);
-const vaultAbi = parseAbi([
-  "function getAccessManagerAddress() view returns (address)",
-  "function convertToPublicVault()",
-  "function getPriceOracleMiddleware() view returns (address)",
-  "function balanceOf(address account) view returns (uint256)",
-]);
-const accessManagerAbi = parseAbi(["function grantRole(uint64 roleId, address account, uint32 executionDelay)"]);
-const priceOracleAbi = parseAbi(["function getAssetPrice(address asset) view returns (uint256 assetPrice, uint256 decimals)"]);
-const wethAbi = parseAbi(["function deposit() payable"]);
-const zapAbi = parseAbi([
-  "struct Call { address target; bytes data; uint256 nativeTokenAmount; }",
-  "struct ZapInData { address vault; address receiver; uint256 minAmountToDeposit; address[] assetsToRefundToSender; Call[] calls; }",
-  "function zapIn(ZapInData zapInData) payable returns (bytes[])",
-  "function ZAP_IN_ALLOWANCE_CONTRACT() view returns (address)",
-]);
-const allowanceAbi = parseAbi(["function transferApprovedAssets(address asset, uint256 amount)"]);
+// grantRole: the grant takes effect without an execution delay.
+const NO_EXECUTION_DELAY = 0;
+const DEPOSIT_SELECTOR = toFunctionSelector("deposit(uint256,address)");
+const NO_ALLOWANCE = 0n;
+
+const NO_NATIVE_TOKEN = 0n;
 
 const { viem } = await network.create("base-kyberswap");
 const publicClient = await viem.getPublicClient();
@@ -74,98 +81,221 @@ const depositor = await viem.getWalletClient(DEPOSITOR);
 
 describe("S6 Aggregator zap of WETH into a USDC vault on Base", () => {
   let vault: Address;
-  const balanceOf = (token: Address, account: Address) => publicClient.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [account] });
-
-  // One zap transaction: the zap pulls the WETH, swaps it through the router and deposits the USDC for the depositor.
-  const zapFromFixture = async (fixture: Fixture) => {
-    const amount = BigInt(fixture.amountIn);
-    const minAmountToDeposit = BigInt(fixture.minOut);
-    const proxy = fixture.router.approvalProxy;
-    // The depositor approves the zap's allowance contract, not the zap itself.
-    const allowanceContract = await publicClient.readContract({ address: ZAP, abi: zapAbi, functionName: "ZAP_IN_ALLOWANCE_CONTRACT" });
-    await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: WETH, abi: erc20Abi, functionName: "approve", args: [allowanceContract, amount] }) });
-
-    const wethBefore = await balanceOf(WETH, DEPOSITOR);
-    const usdcBefore = await balanceOf(USDC, vault);
-    const sharesBefore = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "balanceOf", args: [DEPOSITOR] });
-    const call = (target: Address, data: Hex) => ({ target, data, nativeTokenAmount: 0n });
-    await publicClient.waitForTransactionReceipt({
-      hash: await depositor.writeContract({
-        address: ZAP,
-        abi: zapAbi,
-        functionName: "zapIn",
-        args: [{
-          vault,
-          receiver: DEPOSITOR,
-          // The zap reverts when it would deposit less: the fixture's quoted output less 50 bps slippage.
-          minAmountToDeposit,
-          // WETH the router leaves unspent goes back to the depositor.
-          assetsToRefundToSender: [WETH],
-          calls: [
-            call(allowanceContract, encodeFunctionData({ abi: allowanceAbi, functionName: "transferApprovedAssets", args: [WETH, amount] })),
-            // Reset to 0 first, as the UI does for every token: USDT reverts on a non-zero to non-zero approve.
-            call(WETH, encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [proxy, 0n] })),
-            call(WETH, encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [proxy, amount] })),
-            call(fixture.router.target, fixture.calldata),
-            call(USDC, encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [vault, maxUint256] })),
-          ],
-        }],
-      }),
-    });
-
-    const youDeposit = wethBefore - (await balanceOf(WETH, DEPOSITOR));
-    const youReceive = (await balanceOf(USDC, vault)) - usdcBefore;
-    const shares = (await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "balanceOf", args: [DEPOSITOR] })) - sharesBefore;
-    // Assert against the minimum, never the quote: the route may pay anything between the two.
-    assert.ok(youReceive >= minAmountToDeposit, `${fixture.aggregator}: vault received ${youReceive} USDC units, minimum ${minAmountToDeposit}`);
-    assert.ok(shares > 0n, `${fixture.aggregator}: no shares minted`);
-    return { youDeposit, youReceive };
-  };
-
-  // The UI shows these numbers before the transaction, from a simulation of the zap. This story skips simulation,
-  // so it computes them from the balance changes of the real transaction.
-  const previewValues = async ({ youDeposit, youReceive }: { youDeposit: bigint; youReceive: bigint }) => {
-    // Rate: USDC per 1 WETH, in USDC units (6 decimals).
-    const rate = (youReceive * 10n ** 18n) / youDeposit;
-    // Both sides are valued with the vault's own oracle, never with aggregator-reported USD figures. Prices scale to 18 decimals.
-    const oracle = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getPriceOracleMiddleware" });
-    const usd18 = async (token: Address, amount: bigint, decimals: bigint) => {
-      const [price, priceDecimals] = await publicClient.readContract({ address: oracle, abi: priceOracleAbi, functionName: "getAssetPrice", args: [token] });
-      return (amount * price * 10n ** 18n) / 10n ** priceDecimals / 10n ** decimals;
-    };
-    const usdIn = await usd18(WETH, youDeposit, 18n);
-    const usdOut = await usd18(USDC, youReceive, 6n);
-    // Price impact in percent with two decimals, as computePriceImpact in ipor-webapp src/fusion/deposit/aggregator-zap-in/aggregator-zap-in.utils.ts at eb6664e2e: (usdIn - usdOut) / usdIn * 100.
-    const priceImpact = Number(((usdIn - usdOut) * 10_000n) / usdIn) / 100;
-
-    assert.ok(youDeposit > 0n, `You deposit ${youDeposit}`);
-    assert.ok(rate > 0n, `rate ${rate}`);
-    assert.ok(usdIn > 0n && usdOut > 0n, `usdIn ${usdIn}, usdOut ${usdOut}`);
-    assert.ok(priceImpact < 10, `price impact ${priceImpact}%`);
-  };
 
   it("01 clones a USDC vault, grants the Atomist and opens deposits to everyone, as in S1", async () => {
-    const hash = await owner.writeContract({ address: FACTORY, abi: factoryAbi, functionName: "clone", args: ["Story USDC", "sUSDC", USDC, 0n, OWNER, 0n] });
+    const hash = await owner.writeContract({
+      address: FACTORY,
+      abi: factoryAbi,
+      functionName: "clone",
+      args: [
+        VAULT_NAME,
+        VAULT_SYMBOL,
+        USDC,
+        REDEMPTION_DELAY,
+        OWNER,
+        DAO_FEE_PACKAGE_INDEX,
+      ],
+    });
     const { logs } = await publicClient.waitForTransactionReceipt({ hash });
     const [created] = parseEventLogs({ abi: factoryAbi, logs, eventName: "FusionInstanceCreated" });
     assert.ok(created, "the receipt has no FusionInstanceCreated event");
     vault = created.args.plasmaVault;
-    const accessManager = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getAccessManagerAddress" });
+    const accessManager = await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "getAccessManagerAddress",
+    });
+    const [atomistHadRole] = await publicClient.readContract({
+      address: accessManager,
+      abi: accessManagerAbi,
+      functionName: "hasRole",
+      args: [ATOMIST_ROLE, ATOMIST],
+    });
+    assert.equal(atomistHadRole, false);
     // On the access manager: the Owner grants the Atomist role, which unlocks convertToPublicVault and the role grants that follow.
-    await publicClient.waitForTransactionReceipt({ hash: await owner.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [ATOMIST_ROLE, ATOMIST, 0] }) });
-    await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: vault, abi: vaultAbi, functionName: "convertToPublicVault" }) });
+    await owner.writeContract({
+      address: accessManager,
+      abi: accessManagerAbi,
+      functionName: "grantRole",
+      args: [ATOMIST_ROLE, ATOMIST, NO_EXECUTION_DELAY],
+    });
+    const [[atomistHasRole], depositRoleBefore] = await Promise.all([
+      publicClient.readContract({
+        address: accessManager,
+        abi: accessManagerAbi,
+        functionName: "hasRole",
+        args: [ATOMIST_ROLE, ATOMIST],
+      }),
+      publicClient.readContract({
+        address: accessManager,
+        abi: accessManagerAbi,
+        functionName: "getTargetFunctionRole",
+        args: [vault, DEPOSIT_SELECTOR],
+      }),
+    ]);
+    assert.equal(atomistHasRole, true);
+    assert.notEqual(depositRoleBefore, PUBLIC_ROLE);
+    await atomist.writeContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "convertToPublicVault",
+    });
+    const depositRole = await publicClient.readContract({
+      address: accessManager,
+      abi: accessManagerAbi,
+      functionName: "getTargetFunctionRole",
+      args: [vault, DEPOSIT_SELECTOR],
+    });
+    assert.equal(depositRole, PUBLIC_ROLE);
 
     assert.ok(!isAddressEqual(vault, zeroAddress));
   });
 
   it("02 the depositor wraps 0.1 ETH into WETH, the token the zap spends", async () => {
-    const before = await balanceOf(WETH, DEPOSITOR);
-    await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: WETH, abi: wethAbi, functionName: "deposit", value: parseEther("0.1") }) });
+    const before = await publicClient.readContract({
+      address: WETH,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [DEPOSITOR],
+    });
+    await depositor.writeContract({
+      address: WETH,
+      abi: wethAbi,
+      functionName: "deposit",
+      value: parseEther("0.1"),
+    });
 
-    assert.equal((await balanceOf(WETH, DEPOSITOR)) - before, BigInt(kyberswap.amountIn));
+    const wethBalance = await publicClient.readContract({
+      address: WETH,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [DEPOSITOR],
+    });
+    assert.equal(wethBalance - before, BigInt(kyberswap.amountIn));
   });
 
   it("03 zaps 0.1 WETH into the vault through the recorded KyberSwap route", async () => {
-    await previewValues(await zapFromFixture(kyberswap));
+    // One zap transaction: the zap pulls the WETH, swaps it through the router and deposits the USDC for the depositor.
+    const kyberswapAmountInWeth = BigInt(kyberswap.amountIn);
+    const minAmountToDeposit = BigInt(kyberswap.minOut);
+    const proxy = kyberswap.router.approvalProxy;
+    // The depositor approves the zap's allowance contract, not the zap itself.
+    const allowanceContract = await publicClient.readContract({
+      address: ZAP,
+      abi: zapAbi,
+      functionName: "ZAP_IN_ALLOWANCE_CONTRACT",
+    });
+    assert.equal(await publicClient.readContract({
+      address: WETH,
+      abi: erc20Abi,
+      functionName: "allowance",
+      args: [DEPOSITOR, allowanceContract],
+    }), 0n);
+    await depositor.writeContract({
+      address: WETH,
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [allowanceContract, kyberswapAmountInWeth],
+    });
+    assert.equal(await publicClient.readContract({
+      address: WETH,
+      abi: erc20Abi,
+      functionName: "allowance",
+      args: [DEPOSITOR, allowanceContract],
+    }), kyberswapAmountInWeth);
+
+    const [wethBefore, usdcBefore, sharesBefore] = await Promise.all([
+      publicClient.readContract({
+        address: WETH,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [DEPOSITOR],
+      }),
+      publicClient.readContract({
+        address: USDC,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [vault],
+      }),
+      publicClient.readContract({
+        address: vault,
+        abi: vaultAbi,
+        functionName: "balanceOf",
+        args: [DEPOSITOR],
+      }),
+    ]);
+    await depositor.writeContract({
+      address: ZAP,
+      abi: zapAbi,
+      functionName: "zapIn",
+      args: [{
+        vault,
+        receiver: DEPOSITOR,
+        // The zap reverts when it would deposit less: the route's quoted output less 50 bps slippage.
+        minAmountToDeposit,
+        // WETH the router leaves unspent goes back to the depositor.
+        assetsToRefundToSender: [WETH],
+        calls: [
+          {
+            target: allowanceContract,
+            data: encodeFunctionData({
+              abi: allowanceAbi,
+              functionName: "transferApprovedAssets",
+              args: [WETH, kyberswapAmountInWeth],
+            }),
+            nativeTokenAmount: NO_NATIVE_TOKEN,
+          },
+          // Reset to 0 first, as a client does for every token: USDT reverts on a non-zero to non-zero approve.
+          {
+            target: WETH,
+            data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [proxy, NO_ALLOWANCE] }),
+            nativeTokenAmount: NO_NATIVE_TOKEN,
+          },
+          {
+            target: WETH,
+            data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [proxy, kyberswapAmountInWeth] }),
+            nativeTokenAmount: NO_NATIVE_TOKEN,
+          },
+          {
+            target: kyberswap.router.target,
+            data: kyberswap.calldata,
+            nativeTokenAmount: NO_NATIVE_TOKEN,
+          },
+          {
+            target: USDC,
+            data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [vault, maxUint256] }),
+            nativeTokenAmount: NO_NATIVE_TOKEN,
+          },
+        ],
+      }],
+    });
+
+    const wethBalance = await publicClient.readContract({
+      address: WETH,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [DEPOSITOR],
+    });
+    const youDeposit = wethBefore - wethBalance;
+    const usdcBalance = await publicClient.readContract({
+      address: USDC,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [vault],
+    });
+    const youReceive = usdcBalance - usdcBefore;
+    const shares = (await publicClient.readContract({
+      address: vault,
+      abi: vaultAbi,
+      functionName: "balanceOf",
+      args: [DEPOSITOR],
+    })) - sharesBefore;
+    // Assert against the minimum, never the quote: the route may pay anything between the two.
+    assert.ok(
+      youReceive >= minAmountToDeposit,
+      `${kyberswap.aggregator}: vault received ${youReceive} USDC units, minimum ${minAmountToDeposit}`,
+    );
+    assert.ok(shares > 0n, `${kyberswap.aggregator}: no shares minted`);
+    await previewValues({ publicClient, vault, weth: WETH, usdc: USDC, youDeposit, youReceive });
   });
 });
