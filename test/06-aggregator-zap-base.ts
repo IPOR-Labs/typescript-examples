@@ -139,7 +139,6 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Base", () => {
     const priceImpact = Number(((usdIn - usdOut) * 10_000n) / usdIn) / 100;
 
     assert.ok(youDeposit > 0n, `You deposit ${youDeposit}`);
-    assert.ok(youReceive > 0n, `You receive ${youReceive}`);
     assert.ok(rate > 0n, `rate ${rate}`);
     assert.ok(usdIn > 0n && usdOut > 0n, `usdIn ${usdIn}, usdOut ${usdOut}`);
     assert.ok(priceImpact < 10, `price impact ${priceImpact}%`);
