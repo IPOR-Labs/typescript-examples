@@ -5,7 +5,7 @@
 // The story skips simulation on purpose, to show the transaction flow. A real app on a real
 // chain should simulate before each transaction, to check gas usage and whether it reverts.
 import assert from "node:assert/strict";
-import { before, describe, it } from "node:test";
+import { describe, it } from "node:test";
 import { network } from "hardhat";
 import { parseAbi,parseEventLogs, pad, toFunctionSelector, isAddressEqual, zeroAddress, type Address } from "viem";
 
