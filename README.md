@@ -25,6 +25,9 @@ Runnable [IPOR Fusion](https://ipor.io/) Plasma Vault stories in TypeScript and 
 | S4 | `test/04-private-vault-base.ts` | Whitelist an EOA and deposit into a private vault on Base |
 | S5 | `test/05-token-zaps-ethereum.ts` | Wrap ETH, stake ETH, unwrap wstETH and mint rUSD into vaults on Ethereum |
 | S6 | `test/06-aggregator-zap-ethereum.ts`, `test/06-aggregator-zap-base.ts` | Zap through KyberSwap and Velora on Ethereum, and KyberSwap on Base |
+| S7 | `test/07-alpha-cycle-base.ts` | Alpha supplies to Aave V3, refreshes balances, exits |
+| S8 | `test/08-instant-withdraw-and-redeem-base.ts` | Instant withdraw and redeem, instant-withdrawal fuses, withdraw fee |
+| S9 | `test/09-scheduled-withdraw-base.ts` | Request, release, redeem from a request, partial, overwrite, expiry |
 
 ## How to read a story
 
