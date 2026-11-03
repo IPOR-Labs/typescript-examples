@@ -82,6 +82,8 @@ const feeManagerAbi = parseAbi([
 ]);
 
 const usdc = (amount: string) => parseUnits(amount, 6);
+// Shares have 8 decimals: USDC's 6 plus the vault's offset of 2.
+const shares = (amount: string) => parseUnits(amount, 8);
 const ONE_YEAR = 365 * 24 * 60 * 60;
 
 const { viem, networkHelpers } = await network.create("base");
@@ -93,7 +95,7 @@ const harvester = await viem.getWalletClient(HARVESTER);
 
 describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () => {
   let vault: Address, feeManager: Address;
-  const shares = (account: Address) => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "balanceOf", args: [account] });
+  const shareBalance = (account: Address) => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "balanceOf", args: [account] });
 
   before(async () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
@@ -119,7 +121,7 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
     await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: USDC, abi: erc20Abi, functionName: "approve", args: [vault, usdc("2000")] }) });
     await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "deposit", args: [usdc("1000"), DEPOSITOR] }) });
 
-    assert.ok((await shares(DEPOSITOR)) > 0n);
+    assert.ok((await shareBalance(DEPOSITOR)) > 0n);
   });
 
   it("02 reads the DAO fee package the vault was cloned with", async () => {
@@ -149,43 +151,43 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
 
   it("04 the management fee accrues over a year and a deposit mints it as fee shares", async () => {
     const managementFeeAccount = await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "MANAGEMENT_FEE_ACCOUNT" });
-    const sharesBefore = await shares(managementFeeAccount);
+    const sharesBefore = await shareBalance(managementFeeAccount);
     await networkHelpers.time.increase(ONE_YEAR);
 
     // In USDC, before any fee share exists. Deposit, mint, withdraw and redeem realize it.
     assert.ok((await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getUnrealizedManagementFee" })) > 0n);
     await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "deposit", args: [usdc("100"), DEPOSITOR] }) });
 
-    assert.ok((await shares(managementFeeAccount)) > sharesBefore);
+    assert.ok((await shareBalance(managementFeeAccount)) > sharesBefore);
     assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getUnrealizedManagementFee" }), 0n);
   });
 
   it("05 a gain above the high-water mark mints the performance fee on a withdraw", async () => {
     const performanceFeeAccount = await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "PERFORMANCE_FEE_ACCOUNT" });
-    const sharesBefore = await shares(performanceFeeAccount);
+    const sharesBefore = await shareBalance(performanceFeeAccount);
     // A USDC donation to the vault stands in for a gain. Real gains come from markets (S7).
     await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: USDC, abi: erc20Abi, functionName: "transfer", args: [vault, usdc("100")] }) });
     // Withdraw, redeem, execute and updateMarketsBalances realize the performance fee. A deposit does not.
     await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "withdraw", args: [usdc("1"), DEPOSITOR, DEPOSITOR] }) });
 
-    assert.ok((await shares(performanceFeeAccount)) > sharesBefore);
+    assert.ok((await shareBalance(performanceFeeAccount)) > sharesBefore);
   });
 
   it("06 an account with no role harvests the fees to the recipient and the DAO", async () => {
     const dao = await publicClient.readContract({ address: feeManager, abi: feeManagerAbi, functionName: "getIporDaoFeeRecipientAddress" });
-    const recipientBefore = await shares(FEE_RECIPIENT);
-    const daoBefore = await shares(dao);
+    const recipientBefore = await shareBalance(FEE_RECIPIENT);
+    const daoBefore = await shareBalance(dao);
     // harvestAllFees has no role, so a keeper can automate it. It moves shares out of the fee accounts and mints nothing.
     await publicClient.waitForTransactionReceipt({ hash: await harvester.writeContract({ address: feeManager, abi: feeManagerAbi, functionName: "harvestAllFees" }) });
 
-    assert.ok((await shares(FEE_RECIPIENT)) > recipientBefore);
-    assert.ok((await shares(dao)) > daoBefore);
+    assert.ok((await shareBalance(FEE_RECIPIENT)) > recipientBefore);
+    assert.ok((await shareBalance(dao)) > daoBefore);
   });
 
   it("07 the Atomist caps the supply in shares and a deposit above the room reverts", async () => {
     // The cap counts shares, with 8 decimals (USDC's 6 plus the vault's offset of 2). It defaults to the uint256 maximum.
     const totalSupply = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalSupply" });
-    await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: vault, abi: vaultAbi, functionName: "setTotalSupplyCap", args: [totalSupply + parseUnits("50", 8)] }) });
+    await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: vault, abi: vaultAbi, functionName: "setTotalSupplyCap", args: [totalSupply + shares("50")] }) });
 
     // maxDeposit gives the room left in assets, the value a deposit form should show.
     const maxDeposit = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "maxDeposit", args: [DEPOSITOR] });
@@ -198,7 +200,7 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
   });
 
   it("08 share transfers are off until the Atomist enables them", async () => {
-    const amount = parseUnits("10", 8);
+    const amount = shares("10");
     await assert.rejects(
       // Expected to revert: a new vault restricts transfer and transferFrom to a role no holder has.
       depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "transfer", args: [SHARE_RECEIVER, amount] }),
@@ -208,6 +210,6 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
     await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: vault, abi: vaultAbi, functionName: "enableTransferShares" }) });
     await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "transfer", args: [SHARE_RECEIVER, amount] }) });
 
-    assert.equal(await shares(SHARE_RECEIVER), amount);
+    assert.equal(await shareBalance(SHARE_RECEIVER), amount);
   });
 });

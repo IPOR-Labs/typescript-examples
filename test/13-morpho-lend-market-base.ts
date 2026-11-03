@@ -18,7 +18,7 @@ const MORPHO_BALANCE_FUSE = "0x7916856E11E0CA021967D0D4daC49D737b7d73d5";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 // The Morpho Blue market cbBTC/USDC 86% on Base, held by Morpho Blue 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb.
 // A Morpho market id is already 32 bytes, so it is the substrate as it is.
-const MORPHO_MARKET_ID: Hex = "0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836";
+const MORPHO_BLUE_MARKET_ID: Hex = "0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836";
 // An EOA that holds about 158M USDC at the fork block.
 const USDC_WHALE = "0x8da91A6298eA5d1A8Bc985e99798fd0A0f05701a";
 
@@ -124,15 +124,15 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
     // Grant the id on market 14 only. Do not also grant it on market 41 (MORPHO_LIQUIDITY_IN_MARKETS):
     // both balance fuses would then count the same position, and total assets would count it twice.
     // grantMarketSubstrates replaces the market's whole list.
-    await publicClient.waitForTransactionReceipt({ hash: await fuseManager.writeContract({ address: vault, abi: vaultAbi, functionName: "grantMarketSubstrates", args: [MORPHO_MARKET, [MORPHO_MARKET_ID]] }) });
+    await publicClient.waitForTransactionReceipt({ hash: await fuseManager.writeContract({ address: vault, abi: vaultAbi, functionName: "grantMarketSubstrates", args: [MORPHO_MARKET, [MORPHO_BLUE_MARKET_ID]] }) });
 
     assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "isFuseSupported", args: [MORPHO_SUPPLY_FUSE] }), true);
     assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "isBalanceFuseSupported", args: [MORPHO_MARKET, MORPHO_BALANCE_FUSE] }), true);
-    assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "isMarketSubstrateGranted", args: [MORPHO_MARKET, MORPHO_MARKET_ID] }), true);
+    assert.equal(await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "isMarketSubstrateGranted", args: [MORPHO_MARKET, MORPHO_BLUE_MARKET_ID] }), true);
   });
 
   it("04 the Alpha supplies 8000 USDC to the Morpho market through execute", async () => {
-    const data = encodeFunctionData({ abi: morphoSupplyFuseAbi, functionName: "enter", args: [{ morphoMarketId: MORPHO_MARKET_ID, amount: usdc("8000") }] });
+    const data = encodeFunctionData({ abi: morphoSupplyFuseAbi, functionName: "enter", args: [{ morphoMarketId: MORPHO_BLUE_MARKET_ID, amount: usdc("8000") }] });
     await publicClient.waitForTransactionReceipt({ hash: await alpha.writeContract({ address: vault, abi: vaultAbi, functionName: "execute", args: [[{ fuse: MORPHO_SUPPLY_FUSE, data }]] }) });
 
     // The market reads the position in assets. It differs from the amount entered by rounding of a few wei.
@@ -154,7 +154,7 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
 
   it("06 the Alpha exits the market in full and the funds are idle again", async () => {
     // An amount at or above the position exits all of it: reading the position and exiting exactly that can leave a few wei of rounding.
-    const data = encodeFunctionData({ abi: morphoSupplyFuseAbi, functionName: "exit", args: [{ morphoMarketId: MORPHO_MARKET_ID, amount: maxUint256 }] });
+    const data = encodeFunctionData({ abi: morphoSupplyFuseAbi, functionName: "exit", args: [{ morphoMarketId: MORPHO_BLUE_MARKET_ID, amount: maxUint256 }] });
     await publicClient.waitForTransactionReceipt({ hash: await alpha.writeContract({ address: vault, abi: vaultAbi, functionName: "execute", args: [[{ fuse: MORPHO_SUPPLY_FUSE, data }]] }) });
 
     assert.equal(await inMarket(), 0n);

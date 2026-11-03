@@ -75,7 +75,7 @@ const guardian = await viem.getWalletClient(GUARDIAN);
 
 describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
   let vault: Address, accessManager: Address;
-  const hasRole = (roleId: bigint, account: Address) =>
+  const roleMembership = (roleId: bigint, account: Address) =>
     publicClient.readContract({ address: accessManager, abi: accessManagerAbi, functionName: "hasRole", args: [roleId, account] });
   const totalSupplyCap = () => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getTotalSupplyCap" });
   const deposit = (amount: bigint) => depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "deposit", args: [amount, DEPOSITOR] });
@@ -100,7 +100,7 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
     await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: vault, abi: vaultAbi, functionName: "convertToPublicVault" }) });
     await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: USDC, abi: erc20Abi, functionName: "approve", args: [vault, usdc("1000")] }) });
 
-    assert.deepEqual(await hasRole(ATOMIST_ROLE, ATOMIST), [true, 0]);
+    assert.deepEqual(await roleMembership(ATOMIST_ROLE, ATOMIST), [true, 0]);
   });
 
   it("02 the Owner sets a one-hour floor for Atomist, which binds only new grants", async () => {
@@ -108,7 +108,7 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
     await publicClient.waitForTransactionReceipt({ hash: await owner.writeContract({ address: vault, abi: vaultAbi, functionName: "setMinimalExecutionDelaysForRoles", args: [[ATOMIST_ROLE], [BigInt(ONE_HOUR)]] }) });
 
     // The existing Atomist keeps delay 0: a floor alone timelocks no one.
-    assert.deepEqual(await hasRole(ATOMIST_ROLE, ATOMIST), [true, 0]);
+    assert.deepEqual(await roleMembership(ATOMIST_ROLE, ATOMIST), [true, 0]);
     await assert.rejects(
       // Expected to revert: a new Atomist grant below the floor.
       owner.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [ATOMIST_ROLE, SECOND_ATOMIST, 0] }),
@@ -120,7 +120,7 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
     // A timelock is applied per account, by granting the role again with an execution delay.
     await publicClient.waitForTransactionReceipt({ hash: await owner.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [ATOMIST_ROLE, ATOMIST, ONE_HOUR] }) });
 
-    assert.deepEqual(await hasRole(ATOMIST_ROLE, ATOMIST), [true, ONE_HOUR]);
+    assert.deepEqual(await roleMembership(ATOMIST_ROLE, ATOMIST), [true, ONE_HOUR]);
   });
 
   it("04 a direct Atomist call now reverts", async () => {
@@ -158,7 +158,7 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
     await publicClient.waitForTransactionReceipt({ hash: await guardian.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "cancel", args: [ATOMIST, vault, data] }) });
     await networkHelpers.time.increase(ONE_HOUR);
 
-    assert.deepEqual(await hasRole(GUARDIAN_ROLE, GUARDIAN), [true, 0]);
+    assert.deepEqual(await roleMembership(GUARDIAN_ROLE, GUARDIAN), [true, 0]);
     await assert.rejects(
       // Expected to revert: the cancelled call is no longer scheduled.
       atomist.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "execute", args: [vault, data] }),
