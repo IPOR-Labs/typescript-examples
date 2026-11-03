@@ -30,7 +30,7 @@ const DEPOSITOR = "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65";
 const RECEIVER = "0x976EA74026E726554dB657fA54763abd0C3a0aa9";
 
 // ABIs from ipor-abi (mainnet/mainnet-base-fusion/abis; IporFusionFactoryImpl and IporFusionAccessManagerBase at 55b2d9e,
-// PlasmaVaultBase at b942366, ReferralPlasmaVault at f87f303).
+// PlasmaVaultBase at b942366), and from ipor-fusion 004d054.
 const factoryAbi = parseAbi([
   "function clone(string assetName, string assetSymbol, address underlyingToken, uint256 redemptionDelayInSeconds, address owner, uint256 daoFeePackageIndex) returns (FusionInstance)",
   "struct FusionInstance { uint256 index; uint256 version; string assetName; string assetSymbol; uint8 assetDecimals; address underlyingToken; string underlyingTokenSymbol; uint8 underlyingTokenDecimals; address initialOwner; address plasmaVault; address plasmaVaultBase; address accessManager; address feeManager; address rewardsManager; address withdrawManager; address contextManager; address priceManager; }",
@@ -83,7 +83,7 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
 
   it("02 the owner grants Atomist, as in S1 step 02", async () => {
     // The Atomist is the admin of WHITELIST_ROLE. No other role is needed: deposits stay idle in the vault, without a market.
-    // On the access manager: the Owner grants the Atomist role, which unlocks convertToPublicVault and the role grants that follow.
+    // On the access manager: the Owner grants the Atomist role, which unlocks the role grants that follow.
     await publicClient.waitForTransactionReceipt({ hash: await owner.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [ATOMIST_ROLE, ATOMIST, 0] }) });
 
     assert.equal(await hasRole(ATOMIST_ROLE, ATOMIST), true);

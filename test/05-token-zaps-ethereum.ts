@@ -115,13 +115,13 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     // The UI scales the 8-decimal answer to 18 decimals, then prices the amount: 1 ETH in USD, 18 decimals.
     const ethUsd18 = answer * 10n ** (18n - BigInt(decimals));
     const oneEthUsd = (parseEther("1") * ethUsd18) / WAD;
-    assert.ok(oneEthUsd > 0n);
+    assert.ok(oneEthUsd > parseEther("500") && oneEthUsd < parseEther("20000"), `1 ETH is between 500 and 20000 USD, got ${oneEthUsd} / 1e18`);
   });
 
   it("03 Wrap ETH: the zap wraps ETH into WETH and deposits it into the WETH vault", async () => {
     const amount = parseEther("1");
     // Wrap ETH has a 1:1 rate and no slippage option: the minimum is the exact expected output.
-    const expected = (amount * WAD) / WAD;
+    const expected = amount;
     const minimum = expected;
     // ETH is sent as the transaction value, so there is no approval. The zap deposits its whole WETH balance,
     // which must reach minAmountToDeposit.
@@ -141,7 +141,7 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
   it("04 Stake ETH: the zap stakes ETH with Lido and deposits the stETH into the stETH vault", async () => {
     const amount = parseEther("1");
     // Lido mints stETH 1:1 for ETH, but stETH balances round down by 1 to 2 wei: the minimum is 0.5% below.
-    const expected = (amount * WAD) / WAD;
+    const expected = amount;
     const minimum = slippageMinimum(expected);
     const hash = await depositor.writeContract({
       address: ZAP, abi: zapAbi, functionName: "zapIn", value: amount,
@@ -153,6 +153,7 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     await publicClient.waitForTransactionReceipt({ hash });
 
     assert.ok((await totalAssets(stEthVault)) >= minimum);
+    assert.ok((await depositorAssets(stEthVault)) >= minimum);
   });
 
   it("05 Unwrap wstETH: the depositor approves the zap's allowance contract, and the zap unwraps into the stETH vault", async () => {
@@ -174,6 +175,7 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     const expected = (amount * rate) / WAD;
     const minimum = slippageMinimum(expected);
     const before = await totalAssets(stEthVault);
+    const depositorBefore = await depositorAssets(stEthVault);
     const hash = await depositor.writeContract({
       address: ZAP, abi: zapAbi, functionName: "zapIn",
       args: [{ vault: stEthVault, receiver: DEPOSITOR, minAmountToDeposit: minimum, assetsToRefundToSender: [], calls: [
@@ -185,6 +187,7 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     await publicClient.waitForTransactionReceipt({ hash });
 
     assert.ok((await totalAssets(stEthVault)) - before >= minimum);
+    assert.ok((await depositorAssets(stEthVault)) - depositorBefore >= minimum);
   });
 
   it("06 Mint rUSD: the zap mints rUSD from USDC through Reservoir and deposits it into the rUSD vault", async () => {
@@ -204,11 +207,12 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
         call(USDC, encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [RESERVOIR_PSM, amount] })),
         call(allowanceContract, encodeFunctionData({ abi: zapInAllowanceAbi, functionName: "transferApprovedAssets", args: [USDC, amount] })),
         call(RESERVOIR_CREDIT_ENFORCER, encodeFunctionData({ abi: creditEnforcerAbi, functionName: "mintStablecoin", args: [amount] })),
-        call(RUSD, encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [rUsdVault, expected] })),
+        call(RUSD, encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [rUsdVault, maxUint256] })),
       ] }],
     });
     await publicClient.waitForTransactionReceipt({ hash });
 
     assert.ok((await totalAssets(rUsdVault)) >= minimum);
+    assert.ok((await depositorAssets(rUsdVault)) >= minimum);
   });
 });

@@ -119,9 +119,7 @@ describe("S3 Direct deposit into a public USDC vault", () => {
 
     // Balance label. Max is the balance for an ERC-20 (Max of a native balance keeps 5% back for gas: NATIVE_ETH_MAX_FILL_PERCENT = 95n in https://github.com/IPOR-Labs/ipor-webapp/blob/220fe2a0a794f4194f6b5895febeb65e95839bb0/src/fusion/deposit/deposit-token-amount/deposit-token-amount.types.tsx#L14).
     const balance = await publicClient.readContract({ address: USDC, abi: erc20Abi, functionName: "balanceOf", args: [DEPOSITOR] });
-    const max = balance;
     assert.equal(balance, usdc("5000"));
-    assert.equal(max, usdc("5000"));
 
     // USD value under the amount: the price comes from the vault's own oracle, scaled to 18 decimals as the UI does.
     const oracle = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getPriceOracleMiddleware" });

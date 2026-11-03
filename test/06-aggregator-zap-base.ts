@@ -97,7 +97,7 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Base", () => {
         args: [{
           vault,
           receiver: DEPOSITOR,
-          // The zap reverts when it would deposit less: the aggregator's own minimum at 50 bps slippage.
+          // The zap reverts when it would deposit less: the fixture's quoted output less 50 bps slippage.
           minAmountToDeposit,
           // WETH the router leaves unspent goes back to the depositor.
           assetsToRefundToSender: [WETH],

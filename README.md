@@ -4,7 +4,7 @@ Runnable [IPOR Fusion](https://ipor.io/) Plasma Vault stories in TypeScript and 
 
 ## Setup
 
-1. Node 22 and pnpm.
+1. Node 22.18 and pnpm.
 2. `pnpm install`
 3. Copy `.env.example` to `.env` and set `RPC_URL_BASE` to an archive-capable Base RPC. The fork is pinned to a past block, so a non-archive RPC fails.
    Set `RPC_URL_MAINNET` to an archive-capable Ethereum RPC for S5 and the Ethereum part of S6.
@@ -32,5 +32,5 @@ Runnable [IPOR Fusion](https://ipor.io/) Plasma Vault stories in TypeScript and 
 - Read only the first failure. Later steps depend on earlier ones, so they cascade.
 - The factory installs `BurnRequestFeeFuseV2` in every clone, so `getFuses` returns it even on a fresh vault.
 - Zaps and referral deposits do not work on private vaults, because WHITELIST_ROLE is granted only to EOAs, never to a contract such as the zap or the referral wrapper.
-- S6 replays recorded aggregator routes at their pinned block. `node scripts/record-zap-fixture.ts <aggregator> <chain>` re-records one, then update its network's block in `hardhat.config.ts`. Re-record the two Ethereum fixtures together, back to back, put the earlier of their two blocks in the `ethereum` network, and re-run S5 at that block. The Base fixture keeps its own `base-kyberswap` network.
+- S6 replays recorded aggregator routes at their pinned block. `node scripts/record-zap-fixture.ts <aggregator> <chain>` re-records one, then update its network's block in `hardhat.config.ts`. Both Ethereum fixtures must share one block: re-record them until they do, put that block in the `ethereum` network, and re-run S5 at that block. The Base fixture keeps its own `base-kyberswap` network.
 - ABIs and addresses come from the `ipor-abi` repository (`mainnet/mainnet-base-fusion` at `8b1be92`, `mainnet/addresses.json` at `e228075`).

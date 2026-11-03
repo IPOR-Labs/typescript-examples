@@ -37,9 +37,8 @@ if ((aggregator !== "kyberswap" && aggregator !== "velora") || (chainName !== "e
 const chain = CHAINS[chainName];
 
 const readJsonResponse = async (response: Response): Promise<unknown> => {
-  const body: unknown = await response.json();
-  if (!response.ok) throw new Error(`${response.status} ${response.url}: ${JSON.stringify(body).slice(0, 300)}`);
-  return body;
+  if (!response.ok) throw new Error(`${response.status} ${response.url}: ${(await response.text()).slice(0, 300)}`);
+  return response.json();
 };
 const postJson = (url: string, body: unknown) =>
   fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then(
