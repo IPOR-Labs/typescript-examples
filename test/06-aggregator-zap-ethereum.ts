@@ -24,7 +24,6 @@ import { previewValues } from "../helpers/aggregator-zap-preview.ts";
 import { accessManagerAbi } from "../abis/accessManager.abi.ts";
 import { allowanceAbi } from "../abis/allowance.abi.ts";
 import { factoryAbi } from "../abis/factory.abi.ts";
-import { priceOracleAbi } from "../abis/priceOracle.abi.ts";
 import { vaultAbi } from "../abis/vault.abi.ts";
 import { wethAbi } from "../abis/weth.abi.ts";
 import { zapAbi } from "../abis/zap.abi.ts";

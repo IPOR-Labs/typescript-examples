@@ -242,7 +242,6 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
   });
 
   it("04 a direct Atomist call now reverts", async () => {
-    // The supply cap is in shares: 8 decimals, USDC's 6 plus the vault's offset of 2.
     await assert.rejects(
       // Expected to revert: a delayed role must schedule its calls first.
       atomist.writeContract({

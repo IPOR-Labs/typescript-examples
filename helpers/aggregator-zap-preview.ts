@@ -4,8 +4,8 @@ import { priceOracleAbi } from "../abis/priceOracle.abi.ts";
 import { vaultAbi } from "../abis/vault.abi.ts";
 
 // Rates and prices are scaled to 18 decimals, as in a client.
-const WAD_DECIMALS = 18;
-const WETH_DECIMALS = BigInt(WAD_DECIMALS);
+const WAD_DECIMALS = 18n;
+const WAD = 10n ** WAD_DECIMALS;
 const USDC_DECIMALS = 6n;
 // Price impact is a percent with two decimals: scale the fraction up, then divide by the percent divisor.
 const IMPACT_SCALE = 10_000n;
@@ -29,7 +29,7 @@ export const previewValues = async ({
   youReceive: bigint;
 }) => {
   // Rate: USDC per 1 WETH, in USDC units (6 decimals).
-  const rate = (youReceive * 10n ** BigInt(WAD_DECIMALS)) / youDeposit;
+  const rate = (youReceive * WAD) / youDeposit;
   // Both sides are valued with the vault's own oracle, never with aggregator-reported USD figures. Prices scale to 18 decimals.
   const oracle = await publicClient.readContract({
     address: vault,
@@ -43,9 +43,9 @@ export const previewValues = async ({
       functionName: "getAssetPrice",
       args: [token],
     });
-    return (amount * price * 10n ** BigInt(WAD_DECIMALS)) / 10n ** priceDecimals / 10n ** decimals;
+    return (amount * price * WAD) / 10n ** priceDecimals / 10n ** decimals;
   };
-  const usdIn = await usd18(wethAddress, youDeposit, WETH_DECIMALS);
+  const usdIn = await usd18(wethAddress, youDeposit, WAD_DECIMALS);
   const usdOut = await usd18(usdcAddress, youReceive, USDC_DECIMALS);
   // Price impact in percent with two decimals, as computePriceImpact in ipor-webapp src/fusion/deposit/aggregator-zap-in/aggregator-zap-in.utils.ts at eb6664e2e: (usdIn - usdOut) / usdIn as a percent.
   const priceImpact = Number(((usdIn - usdOut) * IMPACT_SCALE) / usdIn) / IMPACT_PERCENT_DIVISOR;

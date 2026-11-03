@@ -72,7 +72,6 @@ const DEPOSIT_SELECTOR = toFunctionSelector("deposit(uint256,address)");
 const E_MODE_NONE = 0n;
 // Fees have 18 decimals: 1e16 is 1%.
 const feeOnePercent = parseEther("0.01");
-// Fees have 18 decimals.
 const FEE_DECIMALS = 18n;
 const ONE_SECOND = 1n;
 const amount1000Usdc = parseUnits("1000", USDC_DECIMALS);
@@ -86,7 +85,6 @@ const amount300Usdc = parseUnits("300", USDC_DECIMALS);
 
 const GAS_TOP_UP = parseEther("1");
 const ONE_DAY_SECONDS = 86400n;
-// Moves the chain clock past the current block.
 // A received amount may fall 0.1% short of the quote.
 const RECEIVED_MIN_BPS = 9990n;
 
@@ -597,7 +595,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
   });
 
   it("07 the Alpha exits 400 USDC from Aave and releases A's request", async () => {
-    const { shares } = await publicClient.readContract({
+    const depositorARequestBefore = await publicClient.readContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
       functionName: "requestInfo",
@@ -630,21 +628,16 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     assert.equal(idleAfterExit, amount400Usdc);
     // releaseFunds overwrites the released total, it does not add to it: the value passed is the new total released, including shares
     // released earlier and not yet redeemed. The timestamp must be in the past, so the story waits 1 s first.
-    const releaseRequest = await publicClient.readContract({
-      address: withdrawManager,
-      abi: withdrawManagerAbi,
-      functionName: "requestInfo",
-      args: [DEPOSITOR_A],
-    });
-    const releaseRequestTimestamp = releaseRequest.endWithdrawWindowTimestamp - releaseRequest.withdrawWindowInSeconds;
+    const releaseRequestTimestamp =
+      depositorARequestBefore.endWithdrawWindowTimestamp - depositorARequestBefore.withdrawWindowInSeconds;
     const sharesToRelease = await publicClient.readContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
       functionName: "getSharesToRelease",
     });
-    const releaseTotal = sharesToRelease + shares;
+    const releaseTotal = sharesToRelease + depositorARequestBefore.shares;
     assert.equal(sharesToRelease, 0n);
-    assert.equal(releaseRequest.canWithdraw, false);
+    assert.equal(depositorARequestBefore.canWithdraw, false);
     await networkHelpers.time.increase(ONE_SECOND);
     await alpha.writeContract({
       address: withdrawManager,
@@ -666,7 +659,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
         args: [DEPOSITOR_A],
       }),
     ]);
-    assert.equal(sharesToRelease2, shares);
+    assert.equal(sharesToRelease2, depositorARequestBefore.shares);
     assert.equal(depositorARequest.canWithdraw, true);
   });
 
@@ -792,20 +785,15 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     assert.equal(idleAfterExit - idleBeforeExit, amount200Usdc);
     // releaseFunds overwrites the released total, it does not add to it: the value passed is the new total released, including shares
     // released earlier and not yet redeemed. The timestamp must be in the past, so the story waits 1 s first.
-    const releaseRequest = await publicClient.readContract({
-      address: withdrawManager,
-      abi: withdrawManagerAbi,
-      functionName: "requestInfo",
-      args: [DEPOSITOR_B],
-    });
-    const releaseRequestTimestamp = releaseRequest.endWithdrawWindowTimestamp - releaseRequest.withdrawWindowInSeconds;
+    const releaseRequestTimestamp =
+      depositorBRequestAfter.endWithdrawWindowTimestamp - depositorBRequestAfter.withdrawWindowInSeconds;
     const sharesToRelease = await publicClient.readContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
       functionName: "getSharesToRelease",
     });
     const releaseTotal = sharesToRelease + sharesAmount2;
-    assert.equal(releaseRequest.canWithdraw, false);
+    assert.equal(depositorBRequestAfter.canWithdraw, false);
     await networkHelpers.time.increase(ONE_SECOND);
     await alpha.writeContract({
       address: withdrawManager,
@@ -941,7 +929,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
   });
 
   it("11 after the window ends, the request has expired and redeeming from it reverts", async () => {
-    const { shares, endWithdrawWindowTimestamp } = await publicClient.readContract({
+    const depositorBRequestBefore = await publicClient.readContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
       functionName: "requestInfo",
@@ -952,20 +940,15 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     // revert proves expiry. A real Alpha exits from Aave first, as steps 07 and 09 do.
     // releaseFunds overwrites the released total, it does not add to it: the value passed is the new total released, including shares
     // released earlier and not yet redeemed. The timestamp must be in the past, so the story waits 1 s first.
-    const releaseRequest = await publicClient.readContract({
-      address: withdrawManager,
-      abi: withdrawManagerAbi,
-      functionName: "requestInfo",
-      args: [DEPOSITOR_B],
-    });
-    const releaseRequestTimestamp = releaseRequest.endWithdrawWindowTimestamp - releaseRequest.withdrawWindowInSeconds;
+    const releaseRequestTimestamp =
+      depositorBRequestBefore.endWithdrawWindowTimestamp - depositorBRequestBefore.withdrawWindowInSeconds;
     const sharesToRelease = await publicClient.readContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
       functionName: "getSharesToRelease",
     });
-    const releaseTotal = sharesToRelease + shares;
-    assert.equal(releaseRequest.canWithdraw, false);
+    const releaseTotal = sharesToRelease + depositorBRequestBefore.shares;
+    assert.equal(depositorBRequestBefore.canWithdraw, false);
     await networkHelpers.time.increase(ONE_SECOND);
     await alpha.writeContract({
       address: withdrawManager,
@@ -981,7 +964,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     });
     assert.equal(depositorBRequest.canWithdraw, true);
 
-    await networkHelpers.time.increaseTo(endWithdrawWindowTimestamp + 1n);
+    await networkHelpers.time.increaseTo(depositorBRequestBefore.endWithdrawWindowTimestamp + 1n);
 
     const depositorBRequest2 = await publicClient.readContract({
       address: withdrawManager,
@@ -995,7 +978,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
         address: vault,
         abi: vaultAbi,
         functionName: "redeemFromRequest",
-        args: [shares, DEPOSITOR_B, DEPOSITOR_B],
+        args: [depositorBRequestBefore.shares, DEPOSITOR_B, DEPOSITOR_B],
       }),
       /WithdrawManagerInvalidSharesToRelease/,
     );

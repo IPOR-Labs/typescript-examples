@@ -67,6 +67,15 @@ const DEPOSIT_SELECTOR = toFunctionSelector("deposit(uint256,address)");
 const E_MODE_NONE = 0n;
 const amount1000Usdc = parseUnits("1000", USDC_DECIMALS);
 const amount300Usdc = parseUnits("300", USDC_DECIMALS);
+// A FuseAction is the fuse address and the ABI-encoded call of its enter or exit function.
+const enterAction = {
+  fuse: AAVE_V3_SUPPLY_FUSE as Address,
+  data: encodeFunctionData({
+    abi: aaveV3SupplyFuseAbi,
+    functionName: "enter",
+    args: [{ asset: USDC, amount: amount300Usdc, userEModeCategoryId: E_MODE_NONE }],
+  }),
+};
 
 const GAS_TOP_UP = parseEther("1");
 const THIRTY_DAYS = 30 * 24 * 60 * 60;
@@ -428,15 +437,6 @@ describe("S7 Alpha cycle on Aave V3", () => {
   });
 
   it("04 the depositor cannot execute: only the Alpha may move funds", async () => {
-    // A FuseAction is the fuse address and the ABI-encoded call of its enter or exit function.
-    const enterAction = {
-      fuse: AAVE_V3_SUPPLY_FUSE as Address,
-      data: encodeFunctionData({
-        abi: aaveV3SupplyFuseAbi,
-        functionName: "enter",
-        args: [{ asset: USDC, amount: amount300Usdc, userEModeCategoryId: E_MODE_NONE }],
-      }),
-    };
     await assert.rejects(
       // Expected to revert: execute is restricted to ALPHA_ROLE.
       depositor.writeContract({
@@ -450,15 +450,6 @@ describe("S7 Alpha cycle on Aave V3", () => {
   });
 
   it("05 the Alpha enters Aave V3 with 300 USDC", async () => {
-    // A FuseAction is the fuse address and the ABI-encoded call of its enter or exit function.
-    const enterAction = {
-      fuse: AAVE_V3_SUPPLY_FUSE as Address,
-      data: encodeFunctionData({
-        abi: aaveV3SupplyFuseAbi,
-        functionName: "enter",
-        args: [{ asset: USDC, amount: amount300Usdc, userEModeCategoryId: E_MODE_NONE }],
-      }),
-    };
     const [idleBefore, inAaveBefore] = await Promise.all([
       publicClient.readContract({
         address: USDC,

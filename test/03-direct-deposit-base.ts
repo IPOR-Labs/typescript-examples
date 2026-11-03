@@ -371,7 +371,6 @@ describe("S3 Direct deposit into a public USDC vault", () => {
 
   it("05 the Atomist sets a 1% deposit fee on the fee manager", async () => {
     // Fees have 18 decimals: 1e16 is 1%. setDepositFee is restricted to ATOMIST_ROLE.
-    const fee = feeOnePercent;
     const depositFeeBefore = await publicClient.readContract({
       address: feeManager,
       abi: feeManagerAbi,
@@ -384,7 +383,7 @@ describe("S3 Direct deposit into a public USDC vault", () => {
         address: feeManager,
         abi: feeManagerAbi,
         functionName: "setDepositFee",
-        args: [fee],
+        args: [feeOnePercent],
       }),
       /AccessManagedUnauthorized/,
     );
@@ -392,7 +391,7 @@ describe("S3 Direct deposit into a public USDC vault", () => {
       address: feeManager,
       abi: feeManagerAbi,
       functionName: "setDepositFee",
-      args: [fee],
+      args: [feeOnePercent],
     });
 
     const depositFeeAfter = await publicClient.readContract({
@@ -400,7 +399,7 @@ describe("S3 Direct deposit into a public USDC vault", () => {
       abi: feeManagerAbi,
       functionName: "getDepositFee",
     });
-    assert.equal(depositFeeAfter, fee);
+    assert.equal(depositFeeAfter, feeOnePercent);
   });
 
   it("06 computes \"Onboarding contribution\" and \"Net deposit\" for 1000 USDC, then deposits and matches the chain", async () => {

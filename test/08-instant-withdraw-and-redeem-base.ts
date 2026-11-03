@@ -76,7 +76,6 @@ const ONE_WEI = 1n;
 const FIRST_PARAMS_INDEX = 0n;
 // Fees have 18 decimals: 1e16 is 1%.
 const feeOnePercent = parseEther("0.01");
-// Fees have 18 decimals.
 const FEE_DECIMALS = 18n;
 const amount1000Usdc = parseUnits("1000", USDC_DECIMALS);
 const amount600Usdc = parseUnits("600", USDC_DECIMALS);
