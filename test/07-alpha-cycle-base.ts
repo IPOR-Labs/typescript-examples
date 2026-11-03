@@ -1,6 +1,6 @@
 // S7 Alpha cycle: the Alpha moves vault funds into Aave V3 and back with execute, and a balance updater
 // refreshes the stored market balance after time passes.
-// It follows S1: steps 01 to 03 repeat S1's setup in short, then a depositor funds the vault.
+// It follows S1: steps 01 and 02 repeat S1's setup in short, then a depositor funds the vault.
 // Every step is a real transaction on a Base fork, and a step depends on the steps above it.
 // The story skips simulation on purpose, to show the transaction flow. A real app on a real
 // chain should simulate before each transaction, to check gas usage and whether it reverts.
@@ -16,6 +16,8 @@ const AAVE_V3_SUPPLY_FUSE = "0x26fD6EF391E98C78CfCA27e00c3d15be4D941625";
 const AAVE_V3_BALANCE_FUSE = "0x952573Ec1B6895a88a95CA523097083d4da4D8e5";
 const ERC20_BALANCE_FUSE = "0x9ba147FC382DBf4D73512A45370ba0B70c25F6aa";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+// Aave V3 aBasUSDC, the aToken the vault holds after enter. Not listed in ipor-abi: from the Aave address book (bgd-labs/aave-address-book, AaveV3Base), checked on Base through UNDERLYING_ASSET_ADDRESS() (USDC) and POOL() (the Aave V3 Pool).
+const AAVE_USDC = "0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB";
 // An EOA that holds enough USDC on Base at the fork block to fund the depositor.
 const USDC_WHALE = "0x8da91A6298eA5d1A8Bc985e99798fd0A0f05701a";
 
@@ -35,8 +37,9 @@ const ALPHA = "0x90F79bf6EB2c4f870365E785982E1f101E93b906";
 const DEPOSITOR = "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65";
 const BALANCE_UPDATER = "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc";
 
-// ABIs from ipor-abi (mainnet/mainnet-base-fusion/abis; IporFusionFactoryImpl and IporFusionAccessManagerBase at 55b2d9e, PlasmaVaultBase at b942366): IporFusionFactory, PlasmaVault (with PlasmaVaultGovernance),
-// IporFusionAccessManager and AaveV3SupplyFuse.
+// ABIs from ipor-abi (mainnet/mainnet-base-fusion/abis; IporFusionFactoryImpl, IporFusionAccessManagerBase and
+// IporFusionPlasmaVaultCoreBase at 55b2d9e, PlasmaVaultBase and SupplyFuseAaveV3 at b942366): IporFusionFactory, PlasmaVault
+// (with PlasmaVaultGovernance), IporFusionAccessManager and SupplyFuseAaveV3.
 const factoryAbi = parseAbi([
   "function clone(string assetName, string assetSymbol, address underlyingToken, uint256 redemptionDelayInSeconds, address owner, uint256 daoFeePackageIndex) returns (FusionInstance)",
   "struct FusionInstance { uint256 index; uint256 version; string assetName; string assetSymbol; uint8 assetDecimals; address underlyingToken; string underlyingTokenSymbol; uint8 underlyingTokenDecimals; address initialOwner; address plasmaVault; address plasmaVaultBase; address accessManager; address feeManager; address rewardsManager; address withdrawManager; address contextManager; address priceManager; }",
@@ -79,7 +82,7 @@ const balanceUpdater = await viem.getWalletClient(BALANCE_UPDATER);
 
 describe("S7 Alpha cycle on Aave V3", () => {
   let vault: Address, accessManager: Address;
-  let idleBefore: bigint, totalAssetsBefore: bigint;
+  let idleBefore: bigint, totalAssetsBefore: bigint, storedBefore: bigint;
   const idle = () => publicClient.readContract({ address: USDC, abi: erc20Abi, functionName: "balanceOf", args: [vault] });
   const inAave = () => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalAssetsInMarket", args: [AAVE_V3_MARKET] });
   const totalAssets = () => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "totalAssets" });
@@ -158,20 +161,23 @@ describe("S7 Alpha cycle on Aave V3", () => {
   it("06 the Atomist grants a balance updater, then 30 days later the stored market balance is stale", async () => {
     // On the access manager: the Atomist grants the role that unlocks updateMarketsBalances on the vault.
     await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [UPDATE_MARKETS_BALANCES_ROLE, BALANCE_UPDATER, 0] }) });
-    const storedBefore = await inAave();
+    storedBefore = await inAave();
     totalAssetsBefore = await totalAssets();
     await networkHelpers.time.increase(30 * 24 * 60 * 60);
 
     // Aave pays interest into the aToken balance, but the vault stores the market balance until it is refreshed.
     assert.equal(await inAave(), storedBefore);
     assert.equal(await totalAssets(), totalAssetsBefore);
+    // The chain moved on: the vault's live aUSDC balance is already above the stored market balance.
+    const liveAave = await publicClient.readContract({ address: AAVE_USDC, abi: erc20Abi, functionName: "balanceOf", args: [vault] });
+    assert.ok(liveAave > storedBefore, `live aUSDC ${liveAave} vs stored ${storedBefore}`);
   });
 
   it("07 the balance updater refreshes the Aave V3 market and total assets grow", async () => {
     await publicClient.waitForTransactionReceipt({ hash: await balanceUpdater.writeContract({ address: vault, abi: vaultAbi, functionName: "updateMarketsBalances", args: [[AAVE_V3_MARKET]] }) });
 
     assert.ok((await totalAssets()) > totalAssetsBefore, `30 days of Aave V3 interest: ${totalAssetsBefore} -> ${await totalAssets()}`);
-    assert.ok((await inAave()) > usdc("300"), `in Aave: ${await inAave()}`);
+    assert.ok((await inAave()) > storedBefore, `in Aave: ${await inAave()}`);
   });
 
   it("08 the Alpha exits everything with the maximum amount", async () => {

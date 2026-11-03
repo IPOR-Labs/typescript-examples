@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { before, describe, it } from "node:test";
 import { network } from "hardhat";
-import { encodeFunctionData, erc20Abi, getAddress, parseAbi, parseEther, parseEventLogs, parseUnits, pad, slice, zeroAddress, type Address } from "viem";
+import { encodeFunctionData, erc20Abi, getAddress, parseAbi, parseEther, parseEventLogs, parseUnits, pad, slice, zeroAddress, zeroHash, type Address } from "viem";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory, Aave V3 fuses),
 // mainnet/addresses.json at e228075 (BalanceFuseErc20) and README.md (USDC).
@@ -38,11 +38,10 @@ const FUSE_MANAGER = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
 const ALPHA = "0x90F79bf6EB2c4f870365E785982E1f101E93b906";
 const DEPOSITOR_A = "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65";
 const DEPOSITOR_B = "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc";
-const REQUEST_FEE_MANAGER = "0x976EA74026E726554dB657fA54763abd0C3a0aa9";
 
 // ABIs from ipor-abi (mainnet/mainnet-base-fusion/abis; IporFusionFactoryImpl, IporFusionAccessManagerBase,
-// IporFusionPlasmaVaultCoreBase and IporFusionWithdrawManagerBase at 55b2d9e, PlasmaVaultBase at b942366): IporFusionFactory,
-// PlasmaVault (with PlasmaVaultGovernance), IporFusionAccessManager, AaveV3SupplyFuse and WithdrawManager.
+// IporFusionPlasmaVaultCoreBase and IporFusionWithdrawManagerBase at 55b2d9e, PlasmaVaultBase and SupplyFuseAaveV3.abi.* at b942366):
+// IporFusionFactory, PlasmaVault (with PlasmaVaultGovernance), IporFusionAccessManager, the Aave V3 supply fuse and WithdrawManager.
 const factoryAbi = parseAbi([
   "function clone(string assetName, string assetSymbol, address underlyingToken, uint256 redemptionDelayInSeconds, address owner, uint256 daoFeePackageIndex) returns (FusionInstance)",
   "struct FusionInstance { uint256 index; uint256 version; string assetName; string assetSymbol; uint8 assetDecimals; address underlyingToken; string underlyingTokenSymbol; uint8 underlyingTokenDecimals; address initialOwner; address plasmaVault; address plasmaVaultBase; address accessManager; address feeManager; address rewardsManager; address withdrawManager; address contextManager; address priceManager; }",
@@ -86,9 +85,6 @@ const withdrawManagerAbi = parseAbi([
 ]);
 
 const usdc = (amount: string) => parseUnits(amount, 6);
-// Fees are WAD: 1e18 is 100%.
-const ONE_PERCENT = parseUnits("0.01", 18);
-const WAD = 10n ** 18n;
 
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
@@ -98,21 +94,18 @@ const fuseManager = await viem.getWalletClient(FUSE_MANAGER);
 const alpha = await viem.getWalletClient(ALPHA);
 const depositorA = await viem.getWalletClient(DEPOSITOR_A);
 const depositorB = await viem.getWalletClient(DEPOSITOR_B);
-const requestFeeManager = await viem.getWalletClient(REQUEST_FEE_MANAGER);
 
 describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
   let vault: Address, accessManager: Address, withdrawManager: Address;
   let lockEnd: bigint, requestFee: bigint;
 
-  const read = {
-    shares: (account: Address) => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "balanceOf", args: [account] }),
-    usdc: (account: Address) => publicClient.readContract({ address: USDC, abi: erc20Abi, functionName: "balanceOf", args: [account] }),
-    toShares: (assets: bigint) => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "convertToShares", args: [assets] }),
-    toAssets: (shares: bigint) => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "convertToAssets", args: [shares] }),
-    request: (account: Address) => publicClient.readContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "requestInfo", args: [account] }),
-    sharesToRelease: () => publicClient.readContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "getSharesToRelease" }),
-    now: async () => (await publicClient.getBlock()).timestamp,
-  };
+  const sharesOf = (account: Address) => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "balanceOf", args: [account] });
+  const usdcOf = (account: Address) => publicClient.readContract({ address: USDC, abi: erc20Abi, functionName: "balanceOf", args: [account] });
+  const toShares = (assets: bigint) => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "convertToShares", args: [assets] });
+  const toAssets = (shares: bigint) => publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "convertToAssets", args: [shares] });
+  const requestOf = (account: Address) => publicClient.readContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "requestInfo", args: [account] });
+  const sharesToRelease = () => publicClient.readContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "getSharesToRelease" });
+  const now = async () => (await publicClient.getBlock()).timestamp;
   const exitAave = async (amount: bigint) => {
     const data = encodeFunctionData({ abi: aaveV3SupplyFuseAbi, functionName: "exit", args: [{ asset: USDC, amount }] });
     await publicClient.waitForTransactionReceipt({ hash: await alpha.writeContract({ address: vault, abi: vaultAbi, functionName: "execute", args: [[{ fuse: AAVE_V3_SUPPLY_FUSE, data }]] }) });
@@ -120,7 +113,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
   // The Alpha releases shares for every request made before the timestamp, which must be in the past.
   // The UI passes the request's own timestamp plus 1 s, so it waits 1 s first.
   const release = async (account: Address, shares: bigint) => {
-    const { endWithdrawWindowTimestamp, withdrawWindowInSeconds } = await read.request(account);
+    const { endWithdrawWindowTimestamp, withdrawWindowInSeconds } = await requestOf(account);
     const requestTimestamp = endWithdrawWindowTimestamp - withdrawWindowInSeconds;
     await networkHelpers.time.increase(1);
     await publicClient.waitForTransactionReceipt({ hash: await alpha.writeContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "releaseFunds", args: [requestTimestamp + 1n, shares] }) });
@@ -146,7 +139,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     accessManager = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getAccessManagerAddress" });
     // The slot holds the address left-padded to 32 bytes, so its last 20 bytes are the address.
     const slot = await publicClient.getStorageAt({ address: vault, slot: WITHDRAW_MANAGER_SLOT });
-    assert.ok(slot, "the Withdraw Manager slot is empty");
+    assert.ok(slot && slot !== zeroHash, "the vault has no Withdraw Manager");
     withdrawManager = getAddress(slice(slot, 12));
     // On the access manager: the Owner grants the Atomist role, which unlocks role grants and convertToPublicVault on the vault.
     await publicClient.waitForTransactionReceipt({ hash: await owner.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [ATOMIST_ROLE, ATOMIST, 0] }) });
@@ -176,126 +169,126 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
       await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: USDC, abi: erc20Abi, functionName: "approve", args: [vault, usdc("1000")] }) });
       await publicClient.waitForTransactionReceipt({ hash: await depositor.writeContract({ address: vault, abi: vaultAbi, functionName: "deposit", args: [usdc("1000"), depositor.account.address] }) });
     }
-    const idle = await read.usdc(vault);
+    const idle = await usdcOf(vault);
     const data = encodeFunctionData({ abi: aaveV3SupplyFuseAbi, functionName: "enter", args: [{ asset: USDC, amount: idle, userEModeCategoryId: 0n }] });
     await publicClient.waitForTransactionReceipt({ hash: await alpha.writeContract({ address: vault, abi: vaultAbi, functionName: "execute", args: [[{ fuse: AAVE_V3_SUPPLY_FUSE, data }]] }) });
 
     assert.equal(idle, usdc("2000"));
-    assert.equal(await read.usdc(vault), 0n);
+    assert.equal(await usdcOf(vault), 0n);
   });
 
   it("04 a plain withdraw reverts: nothing is idle and no instant-withdrawal fuse can unwind Aave", async () => {
     // This is why the scheduled path exists. The UI picks it when the amount is above max instant (S8).
     await assert.rejects(
       depositorA.writeContract({ address: vault, abi: vaultAbi, functionName: "withdraw", args: [usdc("100"), DEPOSITOR_A, DEPOSITOR_A] }),
-      /transfer amount exceeds balance/,
+      /ERC20: transfer amount exceeds balance/,
     );
   });
 
   it("05 reads the Scheduled form: withdraw window, lock end, and the request fee once the Atomist sets one", async () => {
     const window = await publicClient.readContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "getWithdrawWindow" });
-    // "… withdraw it by": the UI adds the window to its clock. Here the clock is the chain's.
-    lockEnd = (await read.now()) + window;
     // On the access manager: role 901 unlocks updateRequestFee on the Withdraw Manager. The Atomist administers it.
-    await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [WITHDRAW_MANAGER_REQUEST_FEE_ROLE, REQUEST_FEE_MANAGER, 0] }) });
-    await publicClient.waitForTransactionReceipt({ hash: await requestFeeManager.writeContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "updateRequestFee", args: [ONE_PERCENT] }) });
+    await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [WITHDRAW_MANAGER_REQUEST_FEE_ROLE, ATOMIST, 0] }) });
+    await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "updateRequestFee", args: [parseEther("0.01")] }) });
     // "Off-boarding (x%)": the request fee, shown as amount * fee / 1e18.
     requestFee = await publicClient.readContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "getRequestFee" });
+    // "… withdraw it by": the UI adds the window to its clock. Here the clock is the chain's.
+    lockEnd = (await now()) + window;
 
     assert.equal(window, 86400n);
-    assert.ok(lockEnd > window);
-    assert.equal(requestFee, ONE_PERCENT);
-    assert.equal((usdc("400") * requestFee) / WAD, usdc("4"));
+    assert.equal(lockEnd, (await now()) + window);
+    assert.equal(requestFee, parseEther("0.01"));
+    assert.equal((usdc("400") * requestFee) / 10n ** 18n, usdc("4"));
   });
 
   it("06 A requests 400 USDC: the fee is taken up front, the shares stay with A, nothing is redeemable yet", async () => {
-    const shares = await read.toShares(usdc("400"));
-    const fee = (shares * requestFee) / WAD;
-    const balanceBefore = await read.shares(DEPOSITOR_A);
+    const shares = await toShares(usdc("400"));
+    const fee = (shares * requestFee) / 10n ** 18n;
+    const balanceBefore = await sharesOf(DEPOSITOR_A);
     await publicClient.waitForTransactionReceipt({ hash: await depositorA.writeContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "requestShares", args: [shares] }) });
-    const request = await read.request(DEPOSITOR_A);
+    const request = await requestOf(DEPOSITOR_A);
 
     // The request records the shares minus the fee. The fee shares move to the Withdraw Manager.
     assert.equal(request.shares, shares - fee);
     // A request does not lock shares: A still holds every share but the fee.
-    assert.equal(await read.shares(DEPOSITOR_A), balanceBefore - fee);
-    assert.equal(request.endWithdrawWindowTimestamp - request.withdrawWindowInSeconds, await read.now());
+    assert.equal(await sharesOf(DEPOSITOR_A), balanceBefore - fee);
+    assert.equal(request.endWithdrawWindowTimestamp - request.withdrawWindowInSeconds, await now());
     assert.ok(request.endWithdrawWindowTimestamp >= lockEnd);
     assert.equal(request.canWithdraw, false);
   });
 
   it("07 the Alpha exits 400 USDC from Aave and releases A's request", async () => {
-    const { shares } = await read.request(DEPOSITOR_A);
+    const { shares } = await requestOf(DEPOSITOR_A);
     await exitAave(usdc("400"));
     await release(DEPOSITOR_A, shares);
 
-    assert.equal(await read.sharesToRelease(), shares);
-    assert.equal((await read.request(DEPOSITOR_A)).canWithdraw, true);
+    assert.equal(await sharesToRelease(), shares);
+    assert.equal((await requestOf(DEPOSITOR_A)).canWithdraw, true);
   });
 
   it("08 A redeems from the request and receives the USDC", async () => {
-    const { shares } = await read.request(DEPOSITOR_A);
+    const { shares } = await requestOf(DEPOSITOR_A);
     // "Requested amount": the request's shares in assets.
-    const expected = await read.toAssets(shares);
-    const usdcBefore = await read.usdc(DEPOSITOR_A);
+    const expected = await toAssets(shares);
+    const usdcBefore = await usdcOf(DEPOSITOR_A);
     await publicClient.waitForTransactionReceipt({ hash: await depositorA.writeContract({ address: vault, abi: vaultAbi, functionName: "redeemFromRequest", args: [shares, DEPOSITOR_A, DEPOSITOR_A] }) });
-    const received = (await read.usdc(DEPOSITOR_A)) - usdcBefore;
+    const received = (await usdcOf(DEPOSITOR_A)) - usdcBefore;
 
     // Management fee accrual pays slightly under convertToAssets (0.011% measured at 1%).
     assert.ok(received <= expected && received >= (expected * 9990n) / 10000n, `received ${received}, expected about ${expected}`);
-    assert.equal((await read.request(DEPOSITOR_A)).shares, 0n);
-    assert.equal(await read.sharesToRelease(), 0n);
+    assert.equal((await requestOf(DEPOSITOR_A)).shares, 0n);
+    assert.equal(await sharesToRelease(), 0n);
   });
 
   it("09 B requests 500 USDC, the Alpha releases only 200, and B redeems what is available", async () => {
-    await publicClient.waitForTransactionReceipt({ hash: await depositorB.writeContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "requestShares", args: [await read.toShares(usdc("500"))] }) });
+    await publicClient.waitForTransactionReceipt({ hash: await depositorB.writeContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "requestShares", args: [await toShares(usdc("500"))] }) });
     await exitAave(usdc("200"));
-    await release(DEPOSITOR_B, await read.toShares(usdc("200")));
+    await release(DEPOSITOR_B, await toShares(usdc("200")));
 
-    const requested = (await read.request(DEPOSITOR_B)).shares;
+    const requested = (await requestOf(DEPOSITOR_B)).shares;
     // "Available to redeem": the shares the release covers, capped by the request and B's balance.
-    const balance = await read.shares(DEPOSITOR_B);
-    const released = await read.sharesToRelease();
+    const balance = await sharesOf(DEPOSITOR_B);
+    const released = await sharesToRelease();
     const coverable = [requested, balance, released].reduce((a, b) => (a < b ? a : b));
     assert.ok(coverable > 0n && coverable < requested, `coverable ${coverable} of ${requested}`);
 
-    const usdcBefore = await read.usdc(DEPOSITOR_B);
+    const usdcBefore = await usdcOf(DEPOSITOR_B);
     await publicClient.waitForTransactionReceipt({ hash: await depositorB.writeContract({ address: vault, abi: vaultAbi, functionName: "redeemFromRequest", args: [coverable, DEPOSITOR_B, DEPOSITOR_B] }) });
-    const received = (await read.usdc(DEPOSITOR_B)) - usdcBefore;
+    const received = (await usdcOf(DEPOSITOR_B)) - usdcBefore;
 
     assert.ok(received <= usdc("200") && received >= usdc("199.9"), `received ${received}`);
     // The rest of the request stays open until the Alpha releases more.
-    assert.equal((await read.request(DEPOSITOR_B)).shares, requested - coverable);
+    assert.equal((await requestOf(DEPOSITOR_B)).shares, requested - coverable);
   });
 
   it("10 B requests again inside the window: the new request replaces the old one and the fee paid is not refunded", async () => {
     // The UI warns before "Update Withdrawal": the remaining request is dropped, not added to.
-    const before = await read.request(DEPOSITOR_B);
-    const shares = await read.toShares(usdc("300"));
-    const fee = (shares * requestFee) / WAD;
-    const balanceBefore = await read.shares(DEPOSITOR_B);
-    const feesHeldBefore = await read.shares(withdrawManager);
+    const requestBefore = await requestOf(DEPOSITOR_B);
+    const shares = await toShares(usdc("300"));
+    const fee = (shares * requestFee) / 10n ** 18n;
+    const balanceBefore = await sharesOf(DEPOSITOR_B);
+    const feesHeldBefore = await sharesOf(withdrawManager);
     await publicClient.waitForTransactionReceipt({ hash: await depositorB.writeContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "requestShares", args: [shares] }) });
-    const after = await read.request(DEPOSITOR_B);
+    const after = await requestOf(DEPOSITOR_B);
 
-    assert.ok(before.shares > 0n && after.endWithdrawWindowTimestamp > before.endWithdrawWindowTimestamp);
+    assert.ok(requestBefore.shares > 0n && after.endWithdrawWindowTimestamp > requestBefore.endWithdrawWindowTimestamp);
     assert.equal(after.shares, shares - fee);
     // B pays the new fee in full and gets nothing of the first fee back: the Withdraw Manager keeps both.
-    assert.equal(await read.shares(DEPOSITOR_B), balanceBefore - fee);
-    assert.equal(await read.shares(withdrawManager), feesHeldBefore + fee);
+    assert.equal(await sharesOf(DEPOSITOR_B), balanceBefore - fee);
+    assert.equal(await sharesOf(withdrawManager), feesHeldBefore + fee);
     // The new request is newer than the last release, so it waits for its own.
     assert.equal(after.canWithdraw, false);
   });
 
   it("11 after the window ends, the request has expired and redeeming from it reverts", async () => {
-    const { shares, endWithdrawWindowTimestamp } = await read.request(DEPOSITOR_B);
+    const { shares, endWithdrawWindowTimestamp } = await requestOf(DEPOSITOR_B);
     // Released, so the only thing that stops B below is the window.
     await release(DEPOSITOR_B, shares);
-    assert.equal((await read.request(DEPOSITOR_B)).canWithdraw, true);
+    assert.equal((await requestOf(DEPOSITOR_B)).canWithdraw, true);
 
     await networkHelpers.time.increaseTo(endWithdrawWindowTimestamp + 1n);
 
-    assert.equal((await read.request(DEPOSITOR_B)).canWithdraw, false);
+    assert.equal((await requestOf(DEPOSITOR_B)).canWithdraw, false);
     await assert.rejects(
       depositorB.writeContract({ address: vault, abi: vaultAbi, functionName: "redeemFromRequest", args: [shares, DEPOSITOR_B, DEPOSITOR_B] }),
       /WithdrawManagerInvalidSharesToRelease/,
