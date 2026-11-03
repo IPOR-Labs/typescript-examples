@@ -28,6 +28,10 @@ Runnable [IPOR Fusion](https://ipor.io/) Plasma Vault stories in TypeScript and 
 | S7 | `test/07-alpha-cycle-base.ts` | Alpha supplies to Aave V3, refreshes balances, exits |
 | S8 | `test/08-instant-withdraw-and-redeem-base.ts` | Instant withdraw and redeem, instant-withdrawal fuses, withdraw fee |
 | S9 | `test/09-scheduled-withdraw-base.ts` | Request, release, redeem from a request, partial, overwrite, expiry |
+| S10 | `test/10-vault-operations-base.ts` | Fees, harvest, supply cap and share transfers on Base |
+| S11 | `test/11-governance-base.ts` | Execution delays, scheduled calls, Guardian cancel and pause on Base |
+| S12 | `test/12-erc4626-market-base.ts` | Install, supply and exit an ERC-4626 market on Base |
+| S13 | `test/13-morpho-lend-market-base.ts` | Install, supply and exit a Morpho Lend market on Base |
 
 ## How to read a story
 
@@ -37,3 +41,4 @@ Runnable [IPOR Fusion](https://ipor.io/) Plasma Vault stories in TypeScript and 
 - Zaps and referral deposits do not work on private vaults, because WHITELIST_ROLE is granted only to EOAs, never to a contract such as the zap or the referral wrapper.
 - S6 replays recorded aggregator routes at their pinned block. `node scripts/record-zap-fixture.ts <aggregator> <chain>` re-records one, then update its network's block in `hardhat.config.ts`. Both Ethereum fixtures must share one block: re-record them until they do, put that block in the `ethereum` network, and re-run S5 at that block. The Base fixture keeps its own `base-kyberswap` network.
 - ABIs and addresses come from the `ipor-abi` repository (`mainnet/mainnet-base-fusion` at `8b1be92`, `mainnet/addresses.json` at `e228075`).
+- The fee manager ABI and the factory's `getDaoFeePackages` are not in ipor-abi's Base folder, so S10 writes them by hand from `ipor-fusion` `main`, as its source comment names.
