@@ -22,5 +22,20 @@ export default defineConfig({
       initialBaseFeePerGas: 0,
       forking: { url: configVariable("RPC_URL_BASE"), blockNumber: 53290165 },
     },
+    // Forked at the block test/fixtures/*-ethereum.json were quoted at.
+    ethereum: {
+      type: "edr-simulated",
+      chainId: 1,
+      initialBaseFeePerGas: 0,
+      forking: { url: configVariable("RPC_URL_MAINNET"), blockNumber: 26330265 },
+    },
+    // Forked at the block test/fixtures/kyberswap-base.json was quoted at.
+    "base-kyberswap": {
+      type: "edr-simulated",
+      chainType: "op",
+      chainId: 8453,
+      initialBaseFeePerGas: 0,
+      forking: { url: configVariable("RPC_URL_BASE"), blockNumber: 53435674 },
+    },
   },
 });

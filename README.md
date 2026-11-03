@@ -7,6 +7,7 @@ Runnable [IPOR Fusion](https://ipor.io/) Plasma Vault stories in TypeScript and 
 1. Node 22 and pnpm.
 2. `pnpm install`
 3. Copy `.env.example` to `.env` and set `RPC_URL_BASE` to an archive-capable Base RPC. The fork is pinned to a past block, so a non-archive RPC fails.
+   Set `RPC_URL_MAINNET` to an archive-capable Ethereum RPC for S5 and the Ethereum part of S6.
 
 ## Run
 
@@ -20,11 +21,16 @@ Runnable [IPOR Fusion](https://ipor.io/) Plasma Vault stories in TypeScript and 
 | --- | --- | --- |
 | S1 | `test/01-create-and-configure-base.ts` | Create and configure a vault on Base |
 | S2 | `test/02-read-a-vault-base.ts` | Read a vault's state on Base |
+| S3 | `test/03-direct-deposit-base.ts` | Deposit directly, with a referral code and under a deposit fee on Base |
+| S4 | `test/04-private-vault-base.ts` | Whitelist an EOA and deposit into a private vault on Base |
+| S5 | `test/05-token-zaps-ethereum.ts` | Wrap ETH, stake ETH, unwrap wstETH and mint rUSD into vaults on Ethereum |
+| S6 | `test/06-aggregator-zap-ethereum.ts`, `test/06-aggregator-zap-base.ts` | Zap through KyberSwap and Velora on Ethereum, and KyberSwap on Base |
 
 ## How to read a story
 
 - Stories do not simulate transactions. A real app should simulate before each transaction.
 - Read only the first failure. Later steps depend on earlier ones, so they cascade.
 - The factory installs `BurnRequestFeeFuseV2` in every clone, so `getFuses` returns it even on a fresh vault.
-- Zaps do not work for private vaults.
+- Zaps and referral deposits do not work on private vaults, because WHITELIST_ROLE is granted only to EOAs, never to a contract such as the zap or the referral wrapper.
+- S6 replays recorded aggregator routes at their pinned block. `node scripts/record-zap-fixture.ts <aggregator> <chain>` re-records one, then update its network's block in `hardhat.config.ts`.
 - ABIs and addresses come from the `ipor-abi` repository (`mainnet/mainnet-base-fusion` at `8b1be92`, `mainnet/addresses.json` at `e228075`).
