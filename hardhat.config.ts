@@ -1,9 +1,12 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { configVariable, defineConfig } from "hardhat/config";
 import hardhatViem from "@nomicfoundation/hardhat-viem";
 import hardhatNetworkHelpers from "@nomicfoundation/hardhat-network-helpers";
 import hardhatNodeTestRunner from "@nomicfoundation/hardhat-node-test-runner";
 
-process.loadEnvFile(".env");
+const envFile = join(import.meta.dirname, ".env");
+if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 export default defineConfig({
   plugins: [hardhatViem, hardhatNetworkHelpers, hardhatNodeTestRunner],

@@ -27,4 +27,4 @@ Runnable [IPOR Fusion](https://ipor.io/) Plasma Vault stories in TypeScript and 
 - Read only the first failure. Later steps depend on earlier ones, so they cascade.
 - The factory installs `BurnRequestFeeFuseV2` in every clone, so `getFuses` returns it even on a fresh vault.
 - Zaps do not work for private vaults.
-- ABIs and addresses come from the `ipor-abi` repository on `main`.
+- ABIs and addresses come from the `ipor-abi` repository (`mainnet/mainnet-base-fusion` at `8b1be92`, `mainnet/addresses.json` at `e228075`).
