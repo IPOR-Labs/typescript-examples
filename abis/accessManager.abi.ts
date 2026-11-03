@@ -1,5 +1,6 @@
 import { parseAbi } from "viem";
 
+// Source: ipor-abi, mainnet/mainnet-base-fusion/abis (IporFusionAccessManagerBase at 55b2d9e).
 export const accessManagerAbi = parseAbi([
   "function grantRole(uint64 roleId, address account, uint32 executionDelay)",
   "function hasRole(uint64 roleId, address account) view returns (bool isMember, uint32 executionDelay)",

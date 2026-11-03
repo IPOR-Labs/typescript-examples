@@ -1,5 +1,6 @@
 import { parseAbi } from "viem";
 
+// Source: ipor-webapp packages/fusion-sdk/src/abi/erc4626-zap-in-with-native-token.abi.ts at 220fe2a0a.
 // This is the deployed zap's ZapInData. The struct on ipor-fusion main has an extra minimum-shares field,
 // and a call encoded with it reverts against the deployed zap.
 export const zapAbi = parseAbi([

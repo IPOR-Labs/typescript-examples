@@ -1,5 +1,6 @@
 import { parseAbi } from "viem";
 
+// Source: ipor-abi, mainnet/mainnet-base-fusion/abis (IporFusionWithdrawManagerBase at 55b2d9e).
 export const withdrawManagerAbi = parseAbi([
   "function getWithdrawWindow() view returns (uint256)",
   "function getPlasmaVaultAddress() view returns (address)",

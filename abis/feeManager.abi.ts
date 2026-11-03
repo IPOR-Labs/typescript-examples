@@ -1,6 +1,7 @@
 import { parseAbi } from "viem";
 
 // From ipor-abi: mainnet/mainnet-base/abis/pretty/IporPlasmaVaultFeeManagerWstETH.abi.sol at 59444e2 (functions and RecipientFee).
+// The deposit-fee items (setDepositFee, getDepositFee, calculateDepositFee, InvalidDepositFee) come from ipor-fusion, contracts/managers/fee/FeeManager.sol at 004d054, which ipor-abi does not publish for Base.
 // The fee errors come from mainnet/mainnet-base-fusion/abis/pretty/PlasmaVaultBase.abi.sol at b942366 (raised by the vault and bubbled up).
 export const feeManagerAbi = parseAbi([
   "function setDepositFee(uint256 fee)",

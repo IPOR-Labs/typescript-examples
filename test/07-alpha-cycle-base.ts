@@ -575,7 +575,7 @@ describe("S7 Alpha cycle on Aave V3", () => {
         { address: vault, abi: vaultAbi, functionName: "totalAssetsInMarket", args: [ERC20_VAULT_BALANCE_MARKET] },
       ],
     });
-    // Only the refreshed market moved: the idle USDC market is not part of this refresh.
+    // The refresh also covers the market's dependencies, so the ERC20 balance market is refreshed too. It stays 0 because its fuse skips the vault's underlying asset (USDC).
     assert.equal(inErc20After, 0n);
     assert.ok(
       totalAssetsAfter > totalAssetsBefore,

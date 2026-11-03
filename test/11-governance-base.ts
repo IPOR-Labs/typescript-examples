@@ -417,12 +417,12 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
   });
 
   it("07 the Guardian pauses the vault, views still answer, then unpauses it", async () => {
-    const vaultTotalAssets1 = await publicClient.readContract({
+    const totalAssetsBeforeDeposit = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "totalAssets",
     });
-    assert.equal(vaultTotalAssets1, 0n);
+    assert.equal(totalAssetsBeforeDeposit, 0n);
     await depositor.writeContract({
       address: vault,
       abi: vaultAbi,
@@ -453,13 +453,13 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       args: [vault, true],
     });
 
-    const vaultTargetClosedBefore = await publicClient.readContract({
+    const targetClosedAfterPause = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "isTargetClosed",
       args: [vault],
     });
-    assert.equal(vaultTargetClosedBefore, true);
+    assert.equal(targetClosedAfterPause, true);
     await assert.rejects(
       // Expected to revert: the vault is closed.
       depositor.writeContract({
@@ -470,12 +470,12 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       }),
       /AccessManagedUnauthorized/,
     );
-    const vaultTotalAssets2 = await publicClient.readContract({
+    const totalAssetsWhilePaused = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "totalAssets",
     });
-    assert.equal(vaultTotalAssets2, amount100Usdc);
+    assert.equal(totalAssetsWhilePaused, amount100Usdc);
     // maxDeposit does not know about the pause and stays non-zero: a deposit must check isTargetClosed itself.
     assert.ok((await publicClient.readContract({
       address: vault,
@@ -490,13 +490,13 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       functionName: "updateTargetClosed",
       args: [vault, false],
     });
-    const vaultTargetClosedAfter = await publicClient.readContract({
+    const targetClosedAfterUnpause = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "isTargetClosed",
       args: [vault],
     });
-    assert.equal(vaultTargetClosedAfter, false);
+    assert.equal(targetClosedAfterUnpause, false);
     await depositor.writeContract({
       address: vault,
       abi: vaultAbi,
@@ -504,11 +504,11 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       args: [amount100Usdc, DEPOSITOR],
     });
 
-    const vaultTotalAssets3 = await publicClient.readContract({
+    const totalAssetsAfterUnpause = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "totalAssets",
     });
-    assert.equal(vaultTotalAssets3, amount200Usdc);
+    assert.equal(totalAssetsAfterUnpause, amount200Usdc);
   });
 });

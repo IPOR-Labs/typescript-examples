@@ -87,6 +87,9 @@ const GAS_TOP_UP = parseEther("1");
 const ONE_DAY_SECONDS = 86400n;
 // A received amount may fall 0.1% short of the quote.
 const RECEIVED_MIN_BPS = 9990n;
+const BPS_DENOMINATOR = 10000n;
+// A partial redeem of 200 USDC pays at least 199.9 USDC.
+const MIN_RECEIVED_FOR_200_USDC = parseUnits("199.9", USDC_DECIMALS);
 
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
@@ -646,7 +649,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
       args: [releaseRequestTimestamp + ONE_SECOND, releaseTotal],
     });
 
-    const [sharesToRelease2, depositorARequest] = await Promise.all([
+    const [sharesToReleaseAfterRelease, depositorARequest] = await Promise.all([
       publicClient.readContract({
         address: withdrawManager,
         abi: withdrawManagerAbi,
@@ -659,7 +662,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
         args: [DEPOSITOR_A],
       }),
     ]);
-    assert.equal(sharesToRelease2, depositorARequestBefore.shares);
+    assert.equal(sharesToReleaseAfterRelease,depositorARequestBefore.shares);
     assert.equal(depositorARequest.canWithdraw, true);
   });
 
@@ -715,7 +718,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
       }),
     ]);
     assert.ok(
-      received <= expected && received >= (expected * RECEIVED_MIN_BPS) / 10000n,
+      received <= expected && received >= (expected * RECEIVED_MIN_BPS) / BPS_DENOMINATOR,
       `received ${received}, expected about ${expected}`,
     );
     assert.equal(depositorARequest.shares, 0n);
@@ -768,7 +771,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
       functionName: "execute",
       args: [[{ fuse: AAVE_V3_SUPPLY_FUSE, data: exitData }]],
     });
-    const [idleAfterExit, sharesAmount2] = await Promise.all([
+    const [idleAfterExit, sharesFor200Usdc] = await Promise.all([
       publicClient.readContract({
         address: USDC,
         abi: erc20Abi,
@@ -792,7 +795,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
       abi: withdrawManagerAbi,
       functionName: "getSharesToRelease",
     });
-    const releaseTotal = sharesToRelease + sharesAmount2;
+    const releaseTotal = sharesToRelease + sharesFor200Usdc;
     assert.equal(depositorBRequestAfter.canWithdraw, false);
     await networkHelpers.time.increase(ONE_SECOND);
     await alpha.writeContract({
@@ -848,17 +851,17 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     const received = depositorBUsdc - usdcBefore;
 
     assert.ok(
-      received <= amount200Usdc && received >= parseUnits("199.9", USDC_DECIMALS),
+      received <= amount200Usdc && received >= MIN_RECEIVED_FOR_200_USDC,
       `received ${received}`,
     );
     // The rest of the request stays open until the Alpha releases more.
-    const depositorBRequest2 = await publicClient.readContract({
+    const depositorBRequestAfterRedeem = await publicClient.readContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
       functionName: "requestInfo",
       args: [DEPOSITOR_B],
     });
-    assert.equal(depositorBRequest2.shares, requested - coverable);
+    assert.equal(depositorBRequestAfterRedeem.shares, requested - coverable);
   });
 
   it("10 B requests again inside the window: the new request replaces the old one and the fee paid is not refunded", async () => {
@@ -966,13 +969,13 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
 
     await networkHelpers.time.increaseTo(depositorBRequestBefore.endWithdrawWindowTimestamp + 1n);
 
-    const depositorBRequest2 = await publicClient.readContract({
+    const depositorBRequestAfterWindow = await publicClient.readContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
       functionName: "requestInfo",
       args: [DEPOSITOR_B],
     });
-    assert.equal(depositorBRequest2.canWithdraw, false);
+    assert.equal(depositorBRequestAfterWindow.canWithdraw, false);
     await assert.rejects(
       depositorB.writeContract({
         address: vault,

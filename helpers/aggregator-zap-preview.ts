@@ -28,8 +28,10 @@ export const previewValues = async ({
   youDeposit: bigint;
   youReceive: bigint;
 }) => {
+  assert.ok(youDeposit > 0n, `You deposit ${youDeposit}`);
   // Rate: USDC per 1 WETH, in USDC units (6 decimals).
   const rate = (youReceive * WAD) / youDeposit;
+  assert.ok(rate > 0n, `rate ${rate}`);
   // Both sides are valued with the vault's own oracle, never with aggregator-reported USD figures. Prices scale to 18 decimals.
   const oracle = await publicClient.readContract({
     address: vault,
@@ -47,11 +49,8 @@ export const previewValues = async ({
   };
   const usdIn = await usd18(wethAddress, youDeposit, WAD_DECIMALS);
   const usdOut = await usd18(usdcAddress, youReceive, USDC_DECIMALS);
+  assert.ok(usdIn > 0n && usdOut > 0n, `usdIn ${usdIn}, usdOut ${usdOut}`);
   // Price impact in percent with two decimals, as computePriceImpact in ipor-webapp src/fusion/deposit/aggregator-zap-in/aggregator-zap-in.utils.ts at eb6664e2e: (usdIn - usdOut) / usdIn as a percent.
   const priceImpact = Number(((usdIn - usdOut) * IMPACT_SCALE) / usdIn) / IMPACT_PERCENT_DIVISOR;
-
-  assert.ok(youDeposit > 0n, `You deposit ${youDeposit}`);
-  assert.ok(rate > 0n, `rate ${rate}`);
-  assert.ok(usdIn > 0n && usdOut > 0n, `usdIn ${usdIn}, usdOut ${usdOut}`);
   assert.ok(priceImpact < 10, `price impact ${priceImpact}%`);
 };

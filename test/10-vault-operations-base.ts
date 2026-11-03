@@ -48,6 +48,9 @@ const DEPOSIT_SELECTOR = toFunctionSelector("deposit(uint256,address)");
 const NO_EXECUTION_DELAY = 0;
 const MANAGEMENT_FEE_BPS = 200n;
 const PERFORMANCE_FEE_BPS = 1000n;
+// Fee package 0 of the factory, the DAO's cut.
+const DAO_MANAGEMENT_FEE_BPS = 5n;
+const DAO_PERFORMANCE_FEE_BPS = 1000n;
 const OVER_LIMIT_MANAGEMENT_FEE_BPS = 600n;
 const amount2000Usdc = parseUnits("2000", USDC_DECIMALS);
 const amount1000Usdc = parseUnits("1000", USDC_DECIMALS);
@@ -59,8 +62,8 @@ const amount10Shares = parseUnits("10", VAULT_SHARE_DECIMALS);
 
 const GAS_TOP_UP = parseEther("1");
 // Totals add the DAO fee package to the recipient's fee.
-const TOTAL_MANAGEMENT_FEE_BPS = 205n;
-const TOTAL_PERFORMANCE_FEE_BPS = 2000n;
+const TOTAL_MANAGEMENT_FEE_BPS = DAO_MANAGEMENT_FEE_BPS + MANAGEMENT_FEE_BPS;
+const TOTAL_PERFORMANCE_FEE_BPS = DAO_PERFORMANCE_FEE_BPS + PERFORMANCE_FEE_BPS;
 
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
@@ -209,8 +212,8 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
       functionName: "getDaoFeePackages",
     });
     assert.ok(daoFeePackage, "the factory has no DAO fee package");
-    assert.equal(daoFeePackage.managementFee, 5n);
-    assert.equal(daoFeePackage.performanceFee, PERFORMANCE_FEE_BPS);
+    assert.equal(daoFeePackage.managementFee, DAO_MANAGEMENT_FEE_BPS);
+    assert.equal(daoFeePackage.performanceFee, DAO_PERFORMANCE_FEE_BPS);
     const [totalManagementFee, totalPerformanceFee] = await Promise.all([
       publicClient.readContract({
         address: feeManager,
@@ -223,8 +226,8 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
         functionName: "getTotalPerformanceFee",
       }),
     ]);
-    assert.equal(totalManagementFee, 5n);
-    assert.equal(totalPerformanceFee, PERFORMANCE_FEE_BPS);
+    assert.equal(totalManagementFee, DAO_MANAGEMENT_FEE_BPS);
+    assert.equal(totalPerformanceFee, DAO_PERFORMANCE_FEE_BPS);
   });
 
   it("03 the Atomist sets a 200 bps management and 1000 bps performance fee for a recipient", async () => {
@@ -242,8 +245,8 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
         functionName: "getTotalPerformanceFee",
       }),
     ]);
-    assert.equal(totalManagementFeeBefore, 5n);
-    assert.equal(totalPerformanceFeeBefore, PERFORMANCE_FEE_BPS);
+    assert.equal(totalManagementFeeBefore, DAO_MANAGEMENT_FEE_BPS);
+    assert.equal(totalPerformanceFeeBefore, DAO_PERFORMANCE_FEE_BPS);
     await atomist.writeContract({
       address: feeManager,
       abi: feeManagerAbi,

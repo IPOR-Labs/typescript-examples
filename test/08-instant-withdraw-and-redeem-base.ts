@@ -72,7 +72,7 @@ const NO_EXECUTION_DELAY = 0;
 const DEPOSIT_SELECTOR = toFunctionSelector("deposit(uint256,address)");
 // Aave eMode category 0 is no eMode.
 const E_MODE_NONE = 0n;
-const ONE_WEI = 1n;
+const ONE_USDC_BASE_UNIT = 1n;
 const FIRST_PARAMS_INDEX = 0n;
 // Fees have 18 decimals: 1e16 is 1%.
 const feeOnePercent = parseEther("0.01");
@@ -89,6 +89,9 @@ const GAS_TOP_UP = parseEther("1");
 // The burned shares are worth 101 USDC within 0.01%.
 const BURN_LOWER_BPS = 10099n;
 const BURN_UPPER_BPS = 10101n;
+const BPS_DENOMINATOR = 10000n;
+// Redeem pays up to 0.1 USDC less than the formula.
+const PAYOUT_TOLERANCE = parseUnits("0.1", USDC_DECIMALS);
 
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
@@ -517,7 +520,7 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       address: vault,
       abi: vaultAbi,
       functionName: "withdraw",
-      args: [maxInstant + ONE_WEI, DEPOSITOR, DEPOSITOR],
+      args: [maxInstant + ONE_USDC_BASE_UNIT, DEPOSITOR, DEPOSITOR],
     }), /ERC20: transfer amount exceeds balance/);
   });
 
@@ -661,7 +664,7 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       `max instant: ${maxInstant}`,
     );
     // The snapshot left no trace: same shares, same USDC, same market balance.
-    const [depositorShares, depositorUsdc2, inAave] = await Promise.all([
+    const [depositorShares, depositorUsdcAfterRestore, inAave] = await Promise.all([
       publicClient.readContract({
         address: vault,
         abi: vaultAbi,
@@ -682,7 +685,7 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       }),
     ]);
     assert.equal(depositorShares, shares);
-    assert.equal(depositorUsdc2, usdcBefore);
+    assert.equal(depositorUsdcAfterRestore, usdcBefore);
     assert.equal(inAave, aaveBefore);
   });
 
@@ -822,7 +825,8 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     assert.ok(burned > sharesFor100, `burned ${burned}, 100 USDC is ${sharesFor100} shares`);
     // The fee is 1% of the shares for 100 USDC, so the burned shares are worth about 101 USDC at the price before the call.
     assert.ok(
-      burned * 10000n >= sharesFor100 * BURN_LOWER_BPS && burned * 10000n <= sharesFor100 * BURN_UPPER_BPS,
+      burned * BPS_DENOMINATOR >= sharesFor100 * BURN_LOWER_BPS &&
+        burned * BPS_DENOMINATOR <= sharesFor100 * BURN_UPPER_BPS,
       `burned ${burned}, 100 USDC is ${sharesFor100} shares`,
     );
   });
@@ -873,7 +877,7 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     // share price, and redeem first mints the DAO's performance fee (10% in fee package 0) on that rise. So the payout
     // lands below the formula by up to 10% of the burned fee: 0.1 USDC.
     assert.ok(
-      received <= payout && payout - received <= parseUnits("0.1", USDC_DECIMALS),
+      received <= payout && payout - received <= PAYOUT_TOLERANCE,
       `received ${received}, Payout formula ${payout}`,
     );
     const depositorShares = await publicClient.readContract({

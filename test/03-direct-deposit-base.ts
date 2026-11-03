@@ -179,7 +179,7 @@ describe("S3 Direct deposit into a public USDC vault", () => {
 
   it("02 reads the values every deposit shows up front, for an amount of 1000 USDC", async () => {
 
-    // The depositor's full balance for an ERC-20. For a native balance the read keeps 5% back for gas: NATIVE_ETH_MAX_FILL_PERCENT = 95n in https://github.com/IPOR-Labs/ipor-webapp/blob/220fe2a0a794f4194f6b5895febeb65e95839bb0/src/fusion/deposit/deposit-token-amount/deposit-token-amount.types.tsx#L14.
+    // The depositor's full balance for an ERC-20. The balanceOf read keeps nothing back. A client filling Max from a native balance keeps 5% back for gas: NATIVE_ETH_MAX_FILL_PERCENT = 95n in https://github.com/IPOR-Labs/ipor-webapp/blob/220fe2a0a794f4194f6b5895febeb65e95839bb0/src/fusion/deposit/deposit-token-amount/deposit-token-amount.types.tsx#L14.
     const depositorBalanceUsdc = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,

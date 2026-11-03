@@ -3,6 +3,7 @@
 // Usage: node scripts/record-zap-fixture.ts <kyberswap|velora> <ethereum|base>
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { formatEther } from "viem";
 
 const root = join(import.meta.dirname, "..");
 const envFile = join(root, ".env");
@@ -143,6 +144,6 @@ const fixture = {
 
 const dir = join(root, "test", "fixtures");
 mkdirSync(dir, { recursive: true });
-const file = join(dir, `${aggregator}-${chainName}-${Number(AMOUNT_IN) / 1e18}-weth-to-usdc-${block}.json`);
+const file = join(dir, `${aggregator}-${chainName}-${formatEther(AMOUNT_IN)}-weth-to-usdc-${block}.json`);
 writeFileSync(file, JSON.stringify(fixture, null, 2) + "\n");
 console.log(`${file} block ${block}`);
