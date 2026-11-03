@@ -1,7 +1,7 @@
 // S11 Governance: an execution delay floor, a timelocked Atomist, schedule and execute,
-// a Guardian cancelling a scheduled call, and a Guardian pausing and unpausing the vault.
+// a Guardian cancelling a scheduled call, and a Guardian pausing and unpausing the Plasma Vault.
 // It stands alone: step 01 repeats S1's clone, Atomist grant and convertToPublicVault in short,
-// with no market: every deposit stays idle in the vault.
+// with no market: every deposit stays idle in the Plasma Vault.
 // Every step is a real transaction on a Base fork, and a step depends on the steps above it.
 // The story skips simulation on purpose, to show the transaction flow. A real app on a real
 // chain should simulate before each transaction, to check gas usage and whether it reverts.
@@ -18,19 +18,19 @@ import {
   toFunctionSelector,
   type Address,
 } from "viem";
-import { accessManagerAbi } from "../abis/accessManager.abi.ts";
+import { accessManagerAbi } from "../abis/access-manager.abi.ts";
 import { factoryAbi } from "../abis/factory.abi.ts";
-import { vaultAbi } from "../abis/vault.abi.ts";
+import { plasmaVaultAbi } from "../abis/plasma-vault.abi.ts";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory) and README.md (USDC).
 const FACTORY = "0x1455717668fA96534f675856347A973fA907e922";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 // USDC has 6 decimals.
 const USDC_DECIMALS = 6;
-// Vault shares have the asset's decimals plus 2.
-const VAULT_SHARE_DECIMALS = 8;
-const VAULT_NAME = "Story USDC";
-const VAULT_SYMBOL = "sUSDC";
+// Plasma Vault shares have the asset's decimals plus 2.
+const PLASMA_VAULT_SHARE_DECIMALS = 8;
+const PLASMA_VAULT_NAME = "Story USDC";
+const PLASMA_VAULT_SYMBOL = "sUSDC";
 const REDEMPTION_DELAY = 0n;
 const DAO_FEE_PACKAGE_INDEX = 0n;
 // An EOA holding about 158.3M USDC at the fork block funds the depositor.
@@ -58,8 +58,8 @@ const SCHEDULE_AT_EARLIEST = 0;
 const amount1000Usdc = parseUnits("1000", USDC_DECIMALS);
 const amount100Usdc = parseUnits("100", USDC_DECIMALS);
 const amount200Usdc = parseUnits("200", USDC_DECIMALS);
-const amount1000000Shares = parseUnits("1000000", VAULT_SHARE_DECIMALS);
-const amount1Shares = parseUnits("1", VAULT_SHARE_DECIMALS);
+const amount1000000Shares = parseUnits("1000000", PLASMA_VAULT_SHARE_DECIMALS);
+const amount1Shares = parseUnits("1", PLASMA_VAULT_SHARE_DECIMALS);
 
 const GAS_TOP_UP = parseEther("1");
 
@@ -70,8 +70,8 @@ const atomist = await viem.getWalletClient(ATOMIST);
 const depositor = await viem.getWalletClient(DEPOSITOR);
 const guardian = await viem.getWalletClient(GUARDIAN);
 
-describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
-  let vault: Address, accessManager: Address;
+describe("S11 Govern a USDC Plasma Vault: timelock, cancel and pause", () => {
+  let plasmaVault: Address, accessManager: Address;
 
   before(async () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
@@ -87,14 +87,14 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
     });
   });
 
-  it("01 clones a vault, grants Atomist and opens deposits to everyone, as in S1", async () => {
+  it("01 clones a Plasma Vault, grants Atomist and opens deposits to everyone, as in S1", async () => {
     const hash = await owner.writeContract({
       address: FACTORY,
       abi: factoryAbi,
       functionName: "clone",
       args: [
-        VAULT_NAME,
-        VAULT_SYMBOL,
+        PLASMA_VAULT_NAME,
+        PLASMA_VAULT_SYMBOL,
         USDC,
         REDEMPTION_DELAY,
         OWNER,
@@ -104,10 +104,10 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
     const { logs } = await publicClient.waitForTransactionReceipt({ hash });
     const [created] = parseEventLogs({ abi: factoryAbi, logs, eventName: "FusionInstanceCreated" });
     assert.ok(created, "the receipt has no FusionInstanceCreated event");
-    vault = created.args.plasmaVault;
+    plasmaVault = created.args.plasmaVault;
     accessManager = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getAccessManagerAddress",
     });
     const atomistMembershipBefore = await publicClient.readContract({
@@ -121,14 +121,14 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "getTargetFunctionRole",
-      args: [vault, DEPOSIT_SELECTOR],
+      args: [plasmaVault, DEPOSIT_SELECTOR],
     });
     assert.notEqual(depositRoleBefore, PUBLIC_ROLE);
     const depositorAllowanceUsdcBefore = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [DEPOSITOR, vault],
+      args: [DEPOSITOR, plasmaVault],
     });
     assert.equal(depositorAllowanceUsdcBefore, 0n);
     await owner.writeContract({
@@ -138,15 +138,15 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       args: [ATOMIST_ROLE, ATOMIST, NO_EXECUTION_DELAY],
     });
     await atomist.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToPublicVault",
     });
     await depositor.writeContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
-      args: [vault, amount1000Usdc],
+      args: [plasmaVault, amount1000Usdc],
     });
 
     const [atomistMembership, depositRole] = await Promise.all([
@@ -160,7 +160,7 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.deepEqual(atomistMembership, [true, 0]);
@@ -169,13 +169,13 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [DEPOSITOR, vault],
+      args: [DEPOSITOR, plasmaVault],
     });
     assert.equal(depositorAllowanceUsdcAfter, amount1000Usdc);
   });
 
   it("02 the Owner sets a one-hour floor for Atomist, which binds only new grants", async () => {
-    // On the vault, Owner only: the minimal execution delay a new grant of each role must carry.
+    // On the Plasma Vault, Owner only: the minimal execution delay a new grant of each role must carry.
     const atomistExecutionDelaySecondsBefore = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -184,8 +184,8 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
     });
     assert.equal(atomistExecutionDelaySecondsBefore, 0n);
     await owner.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "setMinimalExecutionDelaysForRoles",
       args: [[ATOMIST_ROLE], [BigInt(ONE_HOUR)]],
     });
@@ -245,8 +245,8 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
     await assert.rejects(
       // Expected to revert: a delayed role must schedule its calls first.
       atomist.writeContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "setTotalSupplyCap",
         args: [amount1000000Shares],
       }),
@@ -256,7 +256,7 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
 
   it("05 the Atomist schedules the call, waits out the delay and executes it", async () => {
     const data = encodeFunctionData({
-      abi: vaultAbi,
+      abi: plasmaVaultAbi,
       functionName: "setTotalSupplyCap",
       args: [amount1000000Shares],
     });
@@ -265,7 +265,7 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "hashOperation",
-      args: [ATOMIST, vault, data],
+      args: [ATOMIST, plasmaVault, data],
     });
     const operationScheduleBefore = await publicClient.readContract({
       address: accessManager,
@@ -279,7 +279,7 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "schedule",
-      args: [vault, data, SCHEDULE_AT_EARLIEST],
+      args: [plasmaVault, data, SCHEDULE_AT_EARLIEST],
     });
     assert.ok((await publicClient.readContract({
       address: accessManager,
@@ -293,15 +293,15 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "execute",
-        args: [vault, data],
+        args: [plasmaVault, data],
       }),
       /AccessManagerNotReady/,
     );
 
     await networkHelpers.time.increase(ONE_HOUR);
     const totalSupplyCapBefore = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getTotalSupplyCap",
     });
     assert.equal(totalSupplyCapBefore, maxUint256);
@@ -310,12 +310,12 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "execute",
-      args: [vault, data],
+      args: [plasmaVault, data],
     });
 
     const totalSupplyCapAfter = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getTotalSupplyCap",
     });
     assert.equal(totalSupplyCapAfter, amount1000000Shares);
@@ -345,7 +345,7 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       args: [GUARDIAN_ROLE, GUARDIAN, NO_EXECUTION_DELAY],
     });
     const data = encodeFunctionData({
-      abi: vaultAbi,
+      abi: plasmaVaultAbi,
       functionName: "setTotalSupplyCap",
       args: [amount1Shares],
     });
@@ -353,7 +353,7 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "hashOperation",
-      args: [ATOMIST, vault, data],
+      args: [ATOMIST, plasmaVault, data],
     });
     const operationScheduleBefore = await publicClient.readContract({
       address: accessManager,
@@ -366,7 +366,7 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "schedule",
-      args: [vault, data, SCHEDULE_AT_EARLIEST],
+      args: [plasmaVault, data, SCHEDULE_AT_EARLIEST],
     });
     assert.ok((await publicClient.readContract({
       address: accessManager,
@@ -380,7 +380,7 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "cancel",
-      args: [ATOMIST, vault, data],
+      args: [ATOMIST, plasmaVault, data],
     });
     const operationScheduleAfter = await publicClient.readContract({
       address: accessManager,
@@ -404,44 +404,44 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "execute",
-        args: [vault, data],
+        args: [plasmaVault, data],
       }),
       /AccessManagerNotScheduled/,
     );
     const totalSupplyCap = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getTotalSupplyCap",
     });
     assert.equal(totalSupplyCap, amount1000000Shares);
   });
 
-  it("07 the Guardian pauses the vault, views still answer, then unpauses it", async () => {
+  it("07 the Guardian pauses the Plasma Vault, views still answer, then unpauses it", async () => {
     const totalAssetsBeforeDeposit = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalAssets",
     });
     assert.equal(totalAssetsBeforeDeposit, 0n);
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "deposit",
       args: [amount100Usdc, DEPOSITOR],
     });
-    // On the access manager: closing the vault as a target blocks every restricted vault call,
-    // deposit, withdraw, transfer, schedule and harvestAllFees included. The vault has no pause() of its own.
+    // On the access manager: closing the Plasma Vault as a target blocks every restricted Plasma Vault call,
+    // deposit, withdraw, transfer, schedule and harvestAllFees included. The Plasma Vault has no pause() of its own.
     const [totalAssets, targetClosed] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssets",
       }),
       publicClient.readContract({
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "isTargetClosed",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.equal(totalAssets, amount100Usdc);
@@ -450,36 +450,36 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "updateTargetClosed",
-      args: [vault, true],
+      args: [plasmaVault, true],
     });
 
     const targetClosedAfterPause = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "isTargetClosed",
-      args: [vault],
+      args: [plasmaVault],
     });
     assert.equal(targetClosedAfterPause, true);
     await assert.rejects(
-      // Expected to revert: the vault is closed.
+      // Expected to revert: the Plasma Vault is closed.
       depositor.writeContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "deposit",
         args: [amount100Usdc, DEPOSITOR],
       }),
       /AccessManagedUnauthorized/,
     );
     const totalAssetsWhilePaused = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalAssets",
     });
     assert.equal(totalAssetsWhilePaused, amount100Usdc);
     // maxDeposit does not know about the pause and stays non-zero: a deposit must check isTargetClosed itself.
     assert.ok((await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "maxDeposit",
       args: [DEPOSITOR],
     })) > 0n);
@@ -488,25 +488,25 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "updateTargetClosed",
-      args: [vault, false],
+      args: [plasmaVault, false],
     });
     const targetClosedAfterUnpause = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "isTargetClosed",
-      args: [vault],
+      args: [plasmaVault],
     });
     assert.equal(targetClosedAfterUnpause, false);
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "deposit",
       args: [amount100Usdc, DEPOSITOR],
     });
 
     const totalAssetsAfterUnpause = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalAssets",
     });
     assert.equal(totalAssetsAfterUnpause, amount200Usdc);

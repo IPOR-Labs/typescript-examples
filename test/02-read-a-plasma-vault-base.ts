@@ -1,5 +1,5 @@
-// S2 Read a vault: read a vault's fuses, market IDs, substrates, price oracle, asset price,
-// total assets and TVL, from a vault this story builds and funds itself.
+// S2 Read a Plasma Vault: read a Plasma Vault's fuses, market IDs, substrates, price oracle, asset price,
+// total assets and TVL, from a Plasma Vault this story builds and funds itself.
 // It stands alone: steps 01 to 03 repeat S1's setup in short, then deposit and supply to Aave V3
 // so every read returns a non-zero value.
 // Every step is a real transaction on a Base fork, and a step depends on the steps above it.
@@ -22,12 +22,12 @@ import {
   zeroAddress,
   type Address,
 } from "viem";
-import { aaveV3SupplyFuseAbi } from "../abis/aaveV3SupplyFuse.abi.ts";
-import { accessManagerAbi } from "../abis/accessManager.abi.ts";
+import { aaveV3SupplyFuseAbi } from "../abis/aave-v3-supply-fuse.abi.ts";
+import { accessManagerAbi } from "../abis/access-manager.abi.ts";
 import { factoryAbi } from "../abis/factory.abi.ts";
 import { fuseAbi } from "../abis/fuse.abi.ts";
-import { priceOracleAbi } from "../abis/priceOracle.abi.ts";
-import { vaultAbi } from "../abis/vault.abi.ts";
+import { priceOracleAbi } from "../abis/price-oracle.abi.ts";
+import { plasmaVaultAbi } from "../abis/plasma-vault.abi.ts";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory, Aave V3 fuses),
 // mainnet/addresses.json at e228075 (BalanceFuseErc20) and README.md (USDC).
@@ -40,8 +40,8 @@ const BURN_REQUEST_FEE_FUSE = "0x7f80241a2b8dA1e11b96B5749991e9A9a40b62a9";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 // USDC has 6 decimals.
 const USDC_DECIMALS = 6;
-const VAULT_NAME = "Story USDC";
-const VAULT_SYMBOL = "sUSDC";
+const PLASMA_VAULT_NAME = "Story USDC";
+const PLASMA_VAULT_SYMBOL = "sUSDC";
 const REDEMPTION_DELAY = 0n;
 const DAO_FEE_PACKAGE_INDEX = 0n;
 // Morpho Blue on Base holds enough USDC at the fork block to fund the depositor.
@@ -76,7 +76,7 @@ const amount800Usdc = parseUnits("800", USDC_DECIMALS);
 const amount200Usdc = parseUnits("200", USDC_DECIMALS);
 
 const GAS_TOP_UP = parseEther("1");
-// The vault prices its asset at about 1 USD, within 2%.
+// The Plasma Vault prices its asset at about 1 USD, within 2%.
 const PRICE_LOWER_PERCENT = 98n;
 const PRICE_UPPER_PERCENT = 102n;
 const THIRTY_DAYS = 30 * 24 * 60 * 60;
@@ -90,8 +90,8 @@ const alpha = await viem.getWalletClient(ALPHA);
 const depositor = await viem.getWalletClient(DEPOSITOR);
 const balanceUpdater = await viem.getWalletClient(BALANCE_UPDATER);
 
-describe("S2 Read a USDC vault on Aave V3", () => {
-  let vault: Address, accessManager: Address, priceOracle: Address, asset: Address;
+describe("S2 Read a USDC Plasma Vault on Aave V3", () => {
+  let plasmaVault: Address, accessManager: Address, priceOracle: Address, asset: Address;
   let fuses: readonly Address[];
   let marketIds: bigint[];
   let totalAssets: bigint;
@@ -113,14 +113,14 @@ describe("S2 Read a USDC vault on Aave V3", () => {
     });
   });
 
-  it("01 clones a vault and grants its roles, as in S1", async () => {
+  it("01 clones a Plasma Vault and grants its roles, as in S1", async () => {
     const hash = await owner.writeContract({
       address: FACTORY,
       abi: factoryAbi,
       functionName: "clone",
       args: [
-        VAULT_NAME,
-        VAULT_SYMBOL,
+        PLASMA_VAULT_NAME,
+        PLASMA_VAULT_SYMBOL,
         USDC,
         REDEMPTION_DELAY,
         OWNER,
@@ -130,10 +130,10 @@ describe("S2 Read a USDC vault on Aave V3", () => {
     const { logs } = await publicClient.waitForTransactionReceipt({ hash });
     const [created] = parseEventLogs({ abi: factoryAbi, logs, eventName: "FusionInstanceCreated" });
     assert.ok(created, "the receipt has no FusionInstanceCreated event");
-    vault = created.args.plasmaVault;
+    plasmaVault = created.args.plasmaVault;
     accessManager = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getAccessManagerAddress",
     });
     const [[atomistHasRoleBefore], [fuseManagerHasRoleBefore], [alphaHasRoleBefore]] = await Promise.all([
@@ -159,21 +159,21 @@ describe("S2 Read a USDC vault on Aave V3", () => {
     assert.equal(atomistHasRoleBefore, false);
     assert.equal(fuseManagerHasRoleBefore, false);
     assert.equal(alphaHasRoleBefore, false);
-    // On the access manager: the Owner grants the Atomist role, which unlocks role grants and convertToPublicVault on the vault.
+    // On the access manager: the Owner grants the Atomist role, which unlocks role grants and convertToPublicVault on the Plasma Vault.
     await owner.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "grantRole",
       args: [ATOMIST_ROLE, ATOMIST, NO_EXECUTION_DELAY],
     });
-    // On the access manager: Fuse Manager unlocks addFuses and grantMarketSubstrates on the vault.
+    // On the access manager: Fuse Manager unlocks addFuses and grantMarketSubstrates on the Plasma Vault.
     await atomist.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "grantRole",
       args: [FUSE_MANAGER_ROLE, FUSE_MANAGER, NO_EXECUTION_DELAY],
     });
-    // On the access manager: Alpha unlocks execute on the vault.
+    // On the access manager: Alpha unlocks execute on the Plasma Vault.
     await atomist.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -181,7 +181,7 @@ describe("S2 Read a USDC vault on Aave V3", () => {
       args: [ALPHA_ROLE, ALPHA, NO_EXECUTION_DELAY],
     });
 
-    assert.notEqual(vault, zeroAddress);
+    assert.notEqual(plasmaVault, zeroAddress);
     const [[atomistHasRole], [fuseManagerHasRole], [alphaHasRole]] = await Promise.all([
       publicClient.readContract({
         address: accessManager,
@@ -219,38 +219,38 @@ describe("S2 Read a USDC vault on Aave V3", () => {
       depositTargetFunctionRoleBefore,
     ] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isFuseSupported",
         args: [AAVE_V3_SUPPLY_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [AAVE_V3_MARKET, AAVE_V3_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [ERC20_VAULT_BALANCE_MARKET, ERC20_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [AAVE_V3_MARKET, usdcSubstrate],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [ERC20_VAULT_BALANCE_MARKET, usdcSubstrate],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "getDependencyBalanceGraph",
         args: [AAVE_V3_MARKET],
       }),
@@ -258,7 +258,7 @@ describe("S2 Read a USDC vault on Aave V3", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(aaveV3SupplyFuseSupportedBefore, false);
@@ -270,44 +270,44 @@ describe("S2 Read a USDC vault on Aave V3", () => {
     assert.notEqual(depositTargetFunctionRoleBefore, PUBLIC_ROLE);
 
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "addFuses",
       args: [[AAVE_V3_SUPPLY_FUSE]],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "addBalanceFuse",
       args: [AAVE_V3_MARKET, AAVE_V3_BALANCE_FUSE],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "addBalanceFuse",
       args: [ERC20_VAULT_BALANCE_MARKET, ERC20_BALANCE_FUSE],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "grantMarketSubstrates",
       args: [AAVE_V3_MARKET, [usdcSubstrate]],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "grantMarketSubstrates",
       args: [ERC20_VAULT_BALANCE_MARKET, [usdcSubstrate]],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "updateDependencyBalanceGraphs",
       args: [[AAVE_V3_MARKET], [[ERC20_VAULT_BALANCE_MARKET]]],
     });
     await atomist.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToPublicVault",
     });
 
@@ -321,38 +321,38 @@ describe("S2 Read a USDC vault on Aave V3", () => {
       depositTargetFunctionRole,
     ] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isFuseSupported",
         args: [AAVE_V3_SUPPLY_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [AAVE_V3_MARKET, AAVE_V3_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [ERC20_VAULT_BALANCE_MARKET, ERC20_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [AAVE_V3_MARKET, usdcSubstrate],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [ERC20_VAULT_BALANCE_MARKET, usdcSubstrate],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "getDependencyBalanceGraph",
         args: [AAVE_V3_MARKET],
       }),
@@ -360,7 +360,7 @@ describe("S2 Read a USDC vault on Aave V3", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(aaveV3SupplyFuseSupported, true);
@@ -376,7 +376,7 @@ describe("S2 Read a USDC vault on Aave V3", () => {
     // S3 explains the deposit, S7 the Alpha's execute call.
     const [
       depositorAllowance,
-      vaultUsdcBefore,
+      plasmaVaultUsdcBefore,
       depositorSharesBefore,
       aaveV3MarketTotalAssetsBefore,
     ] = await Promise.all([
@@ -384,65 +384,65 @@ describe("S2 Read a USDC vault on Aave V3", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "allowance",
-        args: [DEPOSITOR, vault],
+        args: [DEPOSITOR, plasmaVault],
       }),
       publicClient.readContract({
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [AAVE_V3_MARKET],
       }),
     ]);
     assert.equal(depositorAllowance, 0n);
-    assert.equal(vaultUsdcBefore, 0n);
+    assert.equal(plasmaVaultUsdcBefore, 0n);
     assert.equal(depositorSharesBefore, 0n);
     assert.equal(aaveV3MarketTotalAssetsBefore, 0n);
     await depositor.writeContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
-      args: [vault, amount1000Usdc],
+      args: [plasmaVault, amount1000Usdc],
     });
     const depositorAllowanceUsdc = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [DEPOSITOR, vault],
+      args: [DEPOSITOR, plasmaVault],
     });
     assert.equal(depositorAllowanceUsdc, amount1000Usdc);
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "deposit",
       args: [amount1000Usdc, DEPOSITOR],
     });
-    const [vaultUsdcAfterDeposit, depositorShares] = await Promise.all([
+    const [plasmaVaultUsdcAfterDeposit, depositorShares] = await Promise.all([
       publicClient.readContract({
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
     ]);
-    assert.equal(vaultUsdcAfterDeposit, amount1000Usdc);
+    assert.equal(plasmaVaultUsdcAfterDeposit, amount1000Usdc);
     assert.ok(depositorShares > 0n);
     const data = encodeFunctionData({
       abi: aaveV3SupplyFuseAbi,
@@ -450,34 +450,34 @@ describe("S2 Read a USDC vault on Aave V3", () => {
       args: [{ asset: USDC, amount: amount800Usdc, userEModeCategoryId: E_MODE_NONE }],
     });
     await alpha.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "execute",
       args: [[{ fuse: AAVE_V3_SUPPLY_FUSE, data }]],
     });
 
-    const [vaultUsdc, aaveV3MarketTotalAssets] = await Promise.all([
+    const [plasmaVaultUsdc, aaveV3MarketTotalAssets] = await Promise.all([
       publicClient.readContract({
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [AAVE_V3_MARKET],
       }),
     ]);
-    assert.equal(vaultUsdc, amount200Usdc);
+    assert.equal(plasmaVaultUsdc, amount200Usdc);
     assert.ok(aaveV3MarketTotalAssets >= amount800Usdc - 1n);
   });
 
-  it("04 reads the vault's fuses", async () => {
+  it("04 reads the Plasma Vault's fuses", async () => {
     fuses = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getFuses",
     });
 
@@ -504,8 +504,8 @@ describe("S2 Read a USDC vault on Aave V3", () => {
 
   it("06 reads the Aave V3 market's substrates", async () => {
     const substrates = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getMarketSubstrates",
       args: [AAVE_V3_MARKET],
     });
@@ -519,17 +519,17 @@ describe("S2 Read a USDC vault on Aave V3", () => {
 
   it("07 reads the price oracle middleware", async () => {
     priceOracle = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getPriceOracleMiddleware",
     });
 
     assert.notEqual(priceOracle, zeroAddress);
   });
 
-  it("08 reads the vault asset and its price in USD from the oracle", async () => {
+  it("08 reads the Plasma Vault asset and its price in USD from the oracle", async () => {
     asset = await publicClient.readContract({
-      address: vault,
+      address: plasmaVault,
       abi: erc4626Abi,
       functionName: "asset",
     });
@@ -556,14 +556,14 @@ describe("S2 Read a USDC vault on Aave V3", () => {
     // updateMarketsBalances is restricted to UPDATE_MARKETS_BALANCES_ROLE (see PlasmaVault.updateMarketsBalances).
     await networkHelpers.time.increase(THIRTY_DAYS);
     const totalAssetsBefore = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalAssets",
     });
     await assert.rejects(
       balanceUpdater.writeContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "updateMarketsBalances",
         args: [marketIds],
       }),
@@ -576,7 +576,7 @@ describe("S2 Read a USDC vault on Aave V3", () => {
       functionName: "hasRole",
       args: [UPDATE_MARKETS_BALANCES_ROLE, BALANCE_UPDATER],
     }))[0], false);
-    // On the access manager: the Atomist grants the role that unlocks updateMarketsBalances on the vault.
+    // On the access manager: the Atomist grants the role that unlocks updateMarketsBalances on the Plasma Vault.
     await atomist.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -590,14 +590,14 @@ describe("S2 Read a USDC vault on Aave V3", () => {
       args: [UPDATE_MARKETS_BALANCES_ROLE, BALANCE_UPDATER],
     }))[0], true);
     await balanceUpdater.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "updateMarketsBalances",
       args: [marketIds],
     });
     totalAssets = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalAssets",
     });
 

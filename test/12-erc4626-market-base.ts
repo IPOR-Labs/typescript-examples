@@ -19,10 +19,10 @@ import {
   pad,
   type Address,
 } from "viem";
-import { accessManagerAbi } from "../abis/accessManager.abi.ts";
-import { erc4626SupplyFuseAbi } from "../abis/erc4626SupplyFuse.abi.ts";
+import { accessManagerAbi } from "../abis/access-manager.abi.ts";
+import { erc4626SupplyFuseAbi } from "../abis/erc4626-supply-fuse.abi.ts";
 import { factoryAbi } from "../abis/factory.abi.ts";
-import { vaultAbi } from "../abis/vault.abi.ts";
+import { plasmaVaultAbi } from "../abis/plasma-vault.abi.ts";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory),
 // mainnet/addresses.json at e228075 (ERC-4626 supply and balance fuses) and README.md (USDC).
@@ -32,8 +32,8 @@ const ERC4626_BALANCE_FUSE = "0x7F4D9EFdE7EfEBBAFbb506ca3f711764cBc96391";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 // USDC has 6 decimals.
 const USDC_DECIMALS = 6;
-const VAULT_NAME = "Story USDC";
-const VAULT_SYMBOL = "sUSDC";
+const PLASMA_VAULT_NAME = "Story USDC";
+const PLASMA_VAULT_SYMBOL = "sUSDC";
 const REDEMPTION_DELAY = 0n;
 const DAO_FEE_PACKAGE_INDEX = 0n;
 // The target ERC-4626 vault: Steakhouse USDC, a MetaMorpho vault on Base.
@@ -77,7 +77,7 @@ const alpha = await viem.getWalletClient(ALPHA);
 const balanceUpdater = await viem.getWalletClient(BALANCE_UPDATER);
 
 describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
-  let vault: Address, accessManager: Address;
+  let plasmaVault: Address, accessManager: Address;
 
   before(async () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
@@ -86,14 +86,14 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
     await networkHelpers.setBalance(USDC_WHALE, GAS_TOP_UP);
   });
 
-  it("01 clones a vault and grants its roles, as in S1", async () => {
+  it("01 clones a Plasma Vault and grants its roles, as in S1", async () => {
     const hash = await owner.writeContract({
       address: FACTORY,
       abi: factoryAbi,
       functionName: "clone",
       args: [
-        VAULT_NAME,
-        VAULT_SYMBOL,
+        PLASMA_VAULT_NAME,
+        PLASMA_VAULT_SYMBOL,
         USDC,
         REDEMPTION_DELAY,
         OWNER,
@@ -103,10 +103,10 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
     const { logs } = await publicClient.waitForTransactionReceipt({ hash });
     const [created] = parseEventLogs({ abi: factoryAbi, logs, eventName: "FusionInstanceCreated" });
     assert.ok(created, "the receipt has no FusionInstanceCreated event");
-    vault = created.args.plasmaVault;
+    plasmaVault = created.args.plasmaVault;
     accessManager = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getAccessManagerAddress",
     });
     const [[atomistHadRole], [fuseManagerHadRole], [alphaHadRole], depositRoleBefore] = await Promise.all([
@@ -132,7 +132,7 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(atomistHadRole, false);
@@ -160,8 +160,8 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
     });
     // The Atomist opens deposits to everyone.
     await atomist.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToPublicVault",
     });
 
@@ -188,7 +188,7 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(atomistHasRole, true);
@@ -204,19 +204,19 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [USDC_WHALE, vault],
+      args: [USDC_WHALE, plasmaVault],
     });
     assert.equal(usdcWhaleAllowanceUsdcBefore, 0n);
     const idleBefore = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "balanceOf",
-      args: [vault],
+      args: [plasmaVault],
     });
     assert.equal(idleBefore, 0n);
     const usdcWhaleSharesBalance = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [USDC_WHALE],
     });
@@ -225,18 +225,18 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
-      args: [vault, amount10000Usdc],
+      args: [plasmaVault, amount10000Usdc],
     });
     const usdcWhaleAllowanceUsdcAfter = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [USDC_WHALE, vault],
+      args: [USDC_WHALE, plasmaVault],
     });
     assert.equal(usdcWhaleAllowanceUsdcAfter, amount10000Usdc);
     await whale.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "deposit",
       args: [amount10000Usdc, USDC_WHALE],
     });
@@ -245,12 +245,12 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
       address: USDC,
       abi: erc20Abi,
       functionName: "balanceOf",
-      args: [vault],
+      args: [plasmaVault],
     });
     assert.equal(idleNow, amount10000Usdc);
     assert.ok((await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [USDC_WHALE],
     })) > 0n);
@@ -262,14 +262,14 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
     // The exit struct is (vault, vaultAssetAmount, maxSharesBurned).
     const [erc4626SupplyFuseSupportedBefore, erc4626BalanceFuseSupportedBefore] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isFuseSupported",
         args: [ERC4626_SUPPLY_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [ERC4626_0001_MARKET, ERC4626_BALANCE_FUSE],
       }),
@@ -277,29 +277,29 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
     assert.equal(erc4626SupplyFuseSupportedBefore, false);
     assert.equal(erc4626BalanceFuseSupportedBefore, false);
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "addFuses",
       args: [[ERC4626_SUPPLY_FUSE]],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "addBalanceFuse",
       args: [ERC4626_0001_MARKET, ERC4626_BALANCE_FUSE],
     });
     // The substrate is the target vault's address, left-padded to 32 bytes. grantMarketSubstrates replaces the market's whole list.
     const substrate = pad(STEAKHOUSE_USDC, { size: 32 });
     const substrateGranted = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "isMarketSubstrateGranted",
       args: [ERC4626_0001_MARKET, substrate],
     });
     assert.equal(substrateGranted, false);
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "grantMarketSubstrates",
       args: [ERC4626_0001_MARKET, [substrate]],
     });
@@ -310,20 +310,20 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
       erc46260001MarketSubstrateGranted,
     ] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isFuseSupported",
         args: [ERC4626_SUPPLY_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [ERC4626_0001_MARKET, ERC4626_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [ERC4626_0001_MARKET, substrate],
       }),
@@ -340,10 +340,10 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
       functionName: "enter",
       args: [{ vault: STEAKHOUSE_USDC, vaultAssetAmount: amount8000Usdc, minSharesOut: NO_MIN_SHARES_OUT }],
     });
-    const [erc46260001MarketTotalAssets, vaultUsdc] = await Promise.all([
+    const [erc46260001MarketTotalAssets, plasmaVaultUsdc] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [ERC4626_0001_MARKET],
       }),
@@ -351,14 +351,14 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.equal(erc46260001MarketTotalAssets, 0n);
-    assert.equal(vaultUsdc, amount10000Usdc);
+    assert.equal(plasmaVaultUsdc, amount10000Usdc);
     await alpha.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "execute",
       args: [[{ fuse: ERC4626_SUPPLY_FUSE, data }]],
     });
@@ -366,8 +366,8 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
     // The market reads the position in assets. It differs from the amount entered by rounding of a few wei.
     const [position, idleNow] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [ERC4626_0001_MARKET],
       }),
@@ -375,7 +375,7 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.ok(
@@ -386,7 +386,7 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
   });
 
   it("05 a balance updater refreshes the market after a day and total assets grow", async () => {
-    // On the access manager: the Atomist grants the role that unlocks updateMarketsBalances on the vault, as in S2.
+    // On the access manager: the Atomist grants the role that unlocks updateMarketsBalances on the Plasma Vault, as in S2.
     const [updaterHadRole] = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -409,19 +409,19 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
     assert.equal(updaterHasRole, true);
     await networkHelpers.time.increase(ONE_DAY);
     const totalAssetsBefore = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalAssets",
     });
     await balanceUpdater.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "updateMarketsBalances",
       args: [[ERC4626_0001_MARKET]],
     });
     const totalAssetsAfter = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalAssets",
     });
 
@@ -437,8 +437,8 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
     });
     const [inMarketBefore, idleBefore] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [ERC4626_0001_MARKET],
       }),
@@ -446,21 +446,21 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.ok(inMarketBefore > 0n);
     assert.equal(idleBefore, amount2000Usdc);
     await alpha.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "execute",
       args: [[{ fuse: ERC4626_SUPPLY_FUSE, data }]],
     });
     const [inMarketNow, idleAfterExit] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [ERC4626_0001_MARKET],
       }),
@@ -468,7 +468,7 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.equal(inMarketNow, 0n);

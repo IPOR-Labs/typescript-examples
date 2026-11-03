@@ -1,8 +1,8 @@
-// S4 Private vault: keep a USDC vault private, whitelist an EOA and see which deposits it refuses.
+// S4 Private Plasma Vault: keep a USDC Plasma Vault private, whitelist an EOA and see which deposits it refuses.
 // It stands alone: steps 01 and 02 repeat S1's setup in short (test/01-create-and-configure-base.ts),
-// without a market and without convertToPublicVault, so the vault stays private.
+// without a market and without convertToPublicVault, so the Plasma Vault stays private.
 // The values every deposit method shares (balance, USD value, paused, maxDeposit, withdraw note)
-// are read as in S3 (test/03-direct-deposit-base.ts). This story shows only what a private vault adds.
+// are read as in S3 (test/03-direct-deposit-base.ts). This story shows only what a private Plasma Vault adds.
 // Every step is a real transaction on a Base fork, and a step depends on the steps above it.
 // The story skips simulation on purpose, to show the transaction flow. A real app on a real
 // chain should simulate before each transaction, to check gas usage and whether it reverts.
@@ -10,10 +10,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { network } from "hardhat";
 import { erc20Abi, parseEther, parseEventLogs, parseUnits, stringToHex, toFunctionSelector, type Address } from "viem";
-import { accessManagerAbi } from "../abis/accessManager.abi.ts";
+import { accessManagerAbi } from "../abis/access-manager.abi.ts";
 import { factoryAbi } from "../abis/factory.abi.ts";
 import { referralAbi } from "../abis/referral.abi.ts";
-import { vaultAbi } from "../abis/vault.abi.ts";
+import { plasmaVaultAbi } from "../abis/plasma-vault.abi.ts";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory),
 // at f87f303 (ReferralPlasmaVault) and README.md (USDC).
@@ -42,8 +42,8 @@ const REFERRAL_CODE = stringToHex("story", { size: 32 });
 const amount1000Usdc = parseUnits("1000", USDC_DECIMALS);
 const amount100Usdc = parseUnits("100", USDC_DECIMALS);
 
-const VAULT_NAME = "Private USDC";
-const VAULT_SYMBOL = "pUSDC";
+const PLASMA_VAULT_NAME = "Private USDC";
+const PLASMA_VAULT_SYMBOL = "pUSDC";
 const REDEMPTION_DELAY = 0n;
 const DAO_FEE_PACKAGE_INDEX = 0n;
 
@@ -55,17 +55,17 @@ const owner = await viem.getWalletClient(OWNER);
 const atomist = await viem.getWalletClient(ATOMIST);
 const depositor = await viem.getWalletClient(DEPOSITOR);
 
-describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
-  let vault: Address, accessManager: Address;
+describe("S4 Private Plasma Vault: whitelist an EOA and the refused deposits", () => {
+  let plasmaVault: Address, accessManager: Address;
 
-  it("01 clones a USDC vault, as in S1 step 01, and it starts private", async () => {
+  it("01 clones a USDC Plasma Vault, as in S1 step 01, and it starts private", async () => {
     const hash = await owner.writeContract({
       address: FACTORY,
       abi: factoryAbi,
       functionName: "clone",
       args: [
-        VAULT_NAME,
-        VAULT_SYMBOL,
+        PLASMA_VAULT_NAME,
+        PLASMA_VAULT_SYMBOL,
         USDC,
         REDEMPTION_DELAY,
         OWNER,
@@ -75,25 +75,25 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
     const { logs } = await publicClient.waitForTransactionReceipt({ hash });
     const [created] = parseEventLogs({ abi: factoryAbi, logs, eventName: "FusionInstanceCreated" });
     assert.ok(created, "the receipt has no FusionInstanceCreated event");
-    vault = created.args.plasmaVault;
+    plasmaVault = created.args.plasmaVault;
     accessManager = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getAccessManagerAddress",
     });
 
-    // A new vault is private: deposit needs WHITELIST_ROLE until the Atomist calls convertToPublicVault, which this story never does.
+    // A new Plasma Vault is private: deposit needs WHITELIST_ROLE until the Atomist calls convertToPublicVault, which this story never does.
     const depositRole = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "getTargetFunctionRole",
-      args: [vault, DEPOSIT_SELECTOR],
+      args: [plasmaVault, DEPOSIT_SELECTOR],
     });
     assert.equal(depositRole, WHITELIST_ROLE);
   });
 
   it("02 the owner grants Atomist, as in S1 step 02", async () => {
-    // The Atomist is the admin of WHITELIST_ROLE. No other role is needed: deposits stay idle in the vault, without a market.
+    // The Atomist is the admin of WHITELIST_ROLE. No other role is needed: deposits stay idle in the Plasma Vault, without a market.
     assert.equal((await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -148,7 +148,7 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "allowance",
-        args: [DEPOSITOR, vault],
+        args: [DEPOSITOR, plasmaVault],
       }),
     ]);
     assert.equal(depositorUsdc, amount1000Usdc);
@@ -157,13 +157,13 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
-      args: [vault, amount1000Usdc],
+      args: [plasmaVault, amount1000Usdc],
     });
     const depositorAllowanceUsdc = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [DEPOSITOR, vault],
+      args: [DEPOSITOR, plasmaVault],
     });
     assert.equal(depositorAllowanceUsdc, amount1000Usdc);
 
@@ -178,8 +178,8 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
     await assert.rejects(
       // Expected to revert: the depositor lacks WHITELIST_ROLE.
       depositor.writeContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "deposit",
         args: [amount100Usdc, DEPOSITOR],
       }),
@@ -215,28 +215,28 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
   it("05 the depositor deposits and receives the shares", async () => {
     const [expectedShares, sharesBefore] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "previewDeposit",
         args: [amount100Usdc],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
     ]);
     assert.equal(sharesBefore, 0n);
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "deposit",
       args: [amount100Usdc, DEPOSITOR],
     });
     const depositorShares = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [DEPOSITOR],
     });
@@ -255,14 +255,14 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
         args: [WHITELIST_ROLE, RECEIVER],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "previewDeposit",
         args: [amount100Usdc],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [RECEIVER],
       }),
@@ -270,14 +270,14 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
     assert.equal(receiverHasRole, false);
     assert.equal(receiverSharesBefore, 0n);
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "deposit",
       args: [amount100Usdc, RECEIVER],
     });
     const receiverShares = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [RECEIVER],
     });
@@ -285,9 +285,9 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
   });
 
   it("07 a referral deposit is refused, because the referral wrapper is the caller", async () => {
-    // ReferralPlasmaVault takes the tokens and calls vault.deposit itself, so the vault sees the wrapper as the caller.
+    // ReferralPlasmaVault takes the tokens and calls Plasma Vault.deposit itself, so the Plasma Vault sees the wrapper as the caller.
     // WHITELIST_ROLE is granted only to EOAs, never to a contract such as the zap or the referral wrapper,
-    // so zaps and referral deposits do not work on a private vault. A private vault takes deposits directly.
+    // so zaps and referral deposits do not work on a private Plasma Vault. A private Plasma Vault takes deposits directly.
     const depositorAllowanceUsdcBefore = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
@@ -323,7 +323,7 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
         address: REFERRAL_PLASMA_VAULT,
         abi: referralAbi,
         functionName: "deposit",
-        args: [vault, amount100Usdc, DEPOSITOR, REFERRAL_CODE],
+        args: [plasmaVault, amount100Usdc, DEPOSITOR, REFERRAL_CODE],
       }),
       /AccessManagedUnauthorized/,
     );

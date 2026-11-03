@@ -1,4 +1,4 @@
-// S6 Aggregator zap on Ethereum: swap WETH into a USDC vault in one zap transaction, from a recorded
+// S6 Aggregator zap on Ethereum: swap WETH into a USDC Plasma Vault in one zap transaction, from a recorded
 // KyberSwap route and a recorded Velora route, then derive the numbers a deposit previews.
 // It stands alone: step 01 repeats S1's setup in short, without a market. The values every deposit shares are in S3.
 // Every step is a real transaction on an Ethereum fork, and a step depends on the steps above it.
@@ -21,10 +21,10 @@ import {
   type Hex,
 } from "viem";
 import { previewValues } from "../helpers/aggregator-zap-preview.ts";
-import { accessManagerAbi } from "../abis/accessManager.abi.ts";
+import { accessManagerAbi } from "../abis/access-manager.abi.ts";
 import { allowanceAbi } from "../abis/allowance.abi.ts";
 import { factoryAbi } from "../abis/factory.abi.ts";
-import { vaultAbi } from "../abis/vault.abi.ts";
+import { plasmaVaultAbi } from "../abis/plasma-vault.abi.ts";
 import { wethAbi } from "../abis/weth.abi.ts";
 import { zapAbi } from "../abis/zap.abi.ts";
 
@@ -33,8 +33,8 @@ import { zapAbi } from "../abis/zap.abi.ts";
 const FACTORY = "0xcd05909C4A1F8E501e4ED554cEF4Ed5E48D9b852";
 const ZAP = "0x677251190C0cCcC6E7e71C385B3EA660Dfd89c00";
 const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-const VAULT_NAME = "Story USDC";
-const VAULT_SYMBOL = "sUSDC";
+const PLASMA_VAULT_NAME = "Story USDC";
+const PLASMA_VAULT_SYMBOL = "sUSDC";
 const REDEMPTION_DELAY = 0n;
 const DAO_FEE_PACKAGE_INDEX = 0n;
 const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
@@ -82,17 +82,17 @@ const owner = await viem.getWalletClient(OWNER);
 const atomist = await viem.getWalletClient(ATOMIST);
 const depositor = await viem.getWalletClient(DEPOSITOR);
 
-describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
-  let vault: Address;
+describe("S6 Aggregator zap of WETH into a USDC Plasma Vault on Ethereum", () => {
+  let plasmaVault: Address;
 
-  it("01 clones a USDC vault, grants the Atomist and opens deposits to everyone, as in S1", async () => {
+  it("01 clones a USDC Plasma Vault, grants the Atomist and opens deposits to everyone, as in S1", async () => {
     const hash = await owner.writeContract({
       address: FACTORY,
       abi: factoryAbi,
       functionName: "clone",
       args: [
-        VAULT_NAME,
-        VAULT_SYMBOL,
+        PLASMA_VAULT_NAME,
+        PLASMA_VAULT_SYMBOL,
         USDC,
         REDEMPTION_DELAY,
         OWNER,
@@ -102,10 +102,10 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
     const { logs } = await publicClient.waitForTransactionReceipt({ hash });
     const [created] = parseEventLogs({ abi: factoryAbi, logs, eventName: "FusionInstanceCreated" });
     assert.ok(created, "the receipt has no FusionInstanceCreated event");
-    vault = created.args.plasmaVault;
+    plasmaVault = created.args.plasmaVault;
     const accessManager = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getAccessManagerAddress",
     });
     const [atomistHadRole] = await publicClient.readContract({
@@ -133,21 +133,21 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(atomistHasRole, true);
     assert.notEqual(depositRoleBefore, PUBLIC_ROLE);
     await atomist.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToPublicVault",
     });
     const depositRole = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "getTargetFunctionRole",
-      args: [vault, DEPOSIT_SELECTOR],
+      args: [plasmaVault, DEPOSIT_SELECTOR],
     });
     assert.equal(depositRole, PUBLIC_ROLE);
 
@@ -177,7 +177,7 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
     assert.equal(wethBalance - wethBalanceBefore, BigInt(kyberswap.amountIn) + BigInt(velora.amountIn));
   });
 
-  it("03 zaps 0.1 WETH into the vault through the recorded KyberSwap route", async () => {
+  it("03 zaps 0.1 WETH into the Plasma Vault through the recorded KyberSwap route", async () => {
     // One zap transaction: the zap pulls the WETH, swaps it through the router and deposits the USDC for the depositor.
     const kyberswapAmountInWeth = BigInt(kyberswap.amountIn);
     const minAmountToDeposit = BigInt(kyberswap.minOut);
@@ -220,11 +220,11 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
@@ -234,7 +234,7 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
       abi: zapAbi,
       functionName: "zapIn",
       args: [{
-        vault,
+        vault: plasmaVault,
         receiver: DEPOSITOR,
         // The zap reverts when it would deposit less: the route's quoted output less 50 bps slippage.
         minAmountToDeposit,
@@ -268,7 +268,7 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
           },
           {
             target: USDC,
-            data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [vault, maxUint256] }),
+            data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [plasmaVault, maxUint256] }),
             nativeTokenAmount: NO_NATIVE_TOKEN,
           },
         ],
@@ -286,25 +286,25 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
       address: USDC,
       abi: erc20Abi,
       functionName: "balanceOf",
-      args: [vault],
+      args: [plasmaVault],
     });
     const youReceive = usdcBalance - usdcBefore;
     const shares = (await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [DEPOSITOR],
     })) - sharesBefore;
     // Assert against the minimum, never the quote: the route may pay anything between the two.
     assert.ok(
       youReceive >= minAmountToDeposit,
-      `${kyberswap.aggregator}: vault received ${youReceive} USDC units, minimum ${minAmountToDeposit}`,
+      `${kyberswap.aggregator}: Plasma Vault received ${youReceive} USDC units, minimum ${minAmountToDeposit}`,
     );
     assert.ok(shares > 0n, `${kyberswap.aggregator}: no shares minted`);
-    await previewValues({ publicClient, vault, wethAddress: WETH, usdcAddress: USDC, youDeposit, youReceive });
+    await previewValues({ publicClient, plasmaVault, wethAddress: WETH, usdcAddress: USDC, youDeposit, youReceive });
   });
 
-  it("04 zaps 0.1 WETH into the vault through the recorded Velora route", async () => {
+  it("04 zaps 0.1 WETH into the Plasma Vault through the recorded Velora route", async () => {
     // One zap transaction: the zap pulls the WETH, swaps it through the router and deposits the USDC for the depositor.
     const veloraAmountInWeth = BigInt(velora.amountIn);
     const minAmountToDeposit = BigInt(velora.minOut);
@@ -347,11 +347,11 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
@@ -361,7 +361,7 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
       abi: zapAbi,
       functionName: "zapIn",
       args: [{
-        vault,
+        vault: plasmaVault,
         receiver: DEPOSITOR,
         // The zap reverts when it would deposit less: the route's quoted output less 50 bps slippage.
         minAmountToDeposit,
@@ -395,7 +395,7 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
           },
           {
             target: USDC,
-            data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [vault, maxUint256] }),
+            data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [plasmaVault, maxUint256] }),
             nativeTokenAmount: NO_NATIVE_TOKEN,
           },
         ],
@@ -413,21 +413,21 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
       address: USDC,
       abi: erc20Abi,
       functionName: "balanceOf",
-      args: [vault],
+      args: [plasmaVault],
     });
     const youReceive = usdcBalance - usdcBefore;
     const shares = (await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [DEPOSITOR],
     })) - sharesBefore;
     // Assert against the minimum, never the quote: the route may pay anything between the two.
     assert.ok(
       youReceive >= minAmountToDeposit,
-      `${velora.aggregator}: vault received ${youReceive} USDC units, minimum ${minAmountToDeposit}`,
+      `${velora.aggregator}: Plasma Vault received ${youReceive} USDC units, minimum ${minAmountToDeposit}`,
     );
     assert.ok(shares > 0n, `${velora.aggregator}: no shares minted`);
-    await previewValues({ publicClient, vault, wethAddress: WETH, usdcAddress: USDC, youDeposit, youReceive });
+    await previewValues({ publicClient, plasmaVault, wethAddress: WETH, usdcAddress: USDC, youDeposit, youReceive });
   });
 });

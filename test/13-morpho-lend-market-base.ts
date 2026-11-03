@@ -19,10 +19,10 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { accessManagerAbi } from "../abis/accessManager.abi.ts";
+import { accessManagerAbi } from "../abis/access-manager.abi.ts";
 import { factoryAbi } from "../abis/factory.abi.ts";
-import { morphoSupplyFuseAbi } from "../abis/morphoSupplyFuse.abi.ts";
-import { vaultAbi } from "../abis/vault.abi.ts";
+import { morphoSupplyFuseAbi } from "../abis/morpho-supply-fuse.abi.ts";
+import { plasmaVaultAbi } from "../abis/plasma-vault.abi.ts";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory),
 // mainnet/addresses.json at e228075 (Morpho supply and balance fuses) and README.md (USDC).
@@ -32,8 +32,8 @@ const MORPHO_BALANCE_FUSE = "0x7916856E11E0CA021967D0D4daC49D737b7d73d5";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 // USDC has 6 decimals.
 const USDC_DECIMALS = 6;
-const VAULT_NAME = "Story USDC";
-const VAULT_SYMBOL = "sUSDC";
+const PLASMA_VAULT_NAME = "Story USDC";
+const PLASMA_VAULT_SYMBOL = "sUSDC";
 const REDEMPTION_DELAY = 0n;
 const DAO_FEE_PACKAGE_INDEX = 0n;
 // The Morpho Blue market cbBTC/USDC 86% on Base, held by Morpho Blue 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb.
@@ -77,7 +77,7 @@ const alpha = await viem.getWalletClient(ALPHA);
 const balanceUpdater = await viem.getWalletClient(BALANCE_UPDATER);
 
 describe("S13 Morpho Lend market on one Morpho Blue market", () => {
-  let vault: Address, accessManager: Address;
+  let plasmaVault: Address, accessManager: Address;
 
   before(async () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
@@ -86,14 +86,14 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
     await networkHelpers.setBalance(USDC_WHALE, GAS_TOP_UP);
   });
 
-  it("01 clones a vault and grants its roles, as in S1", async () => {
+  it("01 clones a Plasma Vault and grants its roles, as in S1", async () => {
     const hash = await owner.writeContract({
       address: FACTORY,
       abi: factoryAbi,
       functionName: "clone",
       args: [
-        VAULT_NAME,
-        VAULT_SYMBOL,
+        PLASMA_VAULT_NAME,
+        PLASMA_VAULT_SYMBOL,
         USDC,
         REDEMPTION_DELAY,
         OWNER,
@@ -103,10 +103,10 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
     const { logs } = await publicClient.waitForTransactionReceipt({ hash });
     const [created] = parseEventLogs({ abi: factoryAbi, logs, eventName: "FusionInstanceCreated" });
     assert.ok(created, "the receipt has no FusionInstanceCreated event");
-    vault = created.args.plasmaVault;
+    plasmaVault = created.args.plasmaVault;
     accessManager = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getAccessManagerAddress",
     });
     const [[atomistHadRole], [fuseManagerHadRole], [alphaHadRole], depositRoleBefore] = await Promise.all([
@@ -132,7 +132,7 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(atomistHadRole, false);
@@ -160,8 +160,8 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
     });
     // The Atomist opens deposits to everyone.
     await atomist.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToPublicVault",
     });
 
@@ -188,7 +188,7 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(atomistHasRole, true);
@@ -204,19 +204,19 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [USDC_WHALE, vault],
+      args: [USDC_WHALE, plasmaVault],
     });
     assert.equal(usdcWhaleAllowanceUsdcBefore, 0n);
     const idleBefore = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "balanceOf",
-      args: [vault],
+      args: [plasmaVault],
     });
     assert.equal(idleBefore, 0n);
     const usdcWhaleSharesBalance = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [USDC_WHALE],
     });
@@ -225,18 +225,18 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
-      args: [vault, amount10000Usdc],
+      args: [plasmaVault, amount10000Usdc],
     });
     const usdcWhaleAllowanceUsdcAfter = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [USDC_WHALE, vault],
+      args: [USDC_WHALE, plasmaVault],
     });
     assert.equal(usdcWhaleAllowanceUsdcAfter, amount10000Usdc);
     await whale.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "deposit",
       args: [amount10000Usdc, USDC_WHALE],
     });
@@ -245,12 +245,12 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
       address: USDC,
       abi: erc20Abi,
       functionName: "balanceOf",
-      args: [vault],
+      args: [plasmaVault],
     });
     assert.equal(idleNow, amount10000Usdc);
     assert.ok((await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [USDC_WHALE],
     })) > 0n);
@@ -260,14 +260,14 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
     // Enter and exit are both (morphoMarketId, amount).
     const [morphoSupplyFuseSupportedBefore, morphoBalanceFuseSupportedBefore] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isFuseSupported",
         args: [MORPHO_SUPPLY_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [MORPHO_MARKET, MORPHO_BALANCE_FUSE],
       }),
@@ -275,14 +275,14 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
     assert.equal(morphoSupplyFuseSupportedBefore, false);
     assert.equal(morphoBalanceFuseSupportedBefore, false);
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "addFuses",
       args: [[MORPHO_SUPPLY_FUSE]],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "addBalanceFuse",
       args: [MORPHO_MARKET, MORPHO_BALANCE_FUSE],
     });
@@ -292,18 +292,18 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
     // Oracle requirement: llms.txt requires an oracle price for both tokens of every granted Morpho market, or the market blocks.
     // This story passes without a cbBTC price because MorphoBalanceFuse (ipor-fusion 004d054,
     // contracts/fuses/morpho/MorphoBalanceFuse.sol:142) skips pricing a token whose amount is 0.
-    // Anyone can supply cbBTC collateral on the vault's behalf. Pricing cbBTC then reverts and blocks execute,
-    // withdraw and updateMarketsBalances for market 14, so a real vault sets the cbBTC price first.
+    // Anyone can supply cbBTC collateral on the Plasma Vault's behalf. Pricing cbBTC then reverts and blocks execute,
+    // withdraw and updateMarketsBalances for market 14, so a real Plasma Vault sets the cbBTC price first.
     const substrateGranted = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "isMarketSubstrateGranted",
       args: [MORPHO_MARKET, MORPHO_BLUE_MARKET_ID],
     });
     assert.equal(substrateGranted, false);
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "grantMarketSubstrates",
       args: [MORPHO_MARKET, [MORPHO_BLUE_MARKET_ID]],
     });
@@ -314,20 +314,20 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
       morphoMarketMorphoBlueMarketIdGranted,
     ] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isFuseSupported",
         args: [MORPHO_SUPPLY_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [MORPHO_MARKET, MORPHO_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [MORPHO_MARKET, MORPHO_BLUE_MARKET_ID],
       }),
@@ -343,10 +343,10 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
       functionName: "enter",
       args: [{ morphoMarketId: MORPHO_BLUE_MARKET_ID, amount: amount8000Usdc }],
     });
-    const [morphoMarketTotalAssets, vaultUsdc] = await Promise.all([
+    const [morphoMarketTotalAssets, plasmaVaultUsdc] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [MORPHO_MARKET],
       }),
@@ -354,14 +354,14 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.equal(morphoMarketTotalAssets, 0n);
-    assert.equal(vaultUsdc, amount10000Usdc);
+    assert.equal(plasmaVaultUsdc, amount10000Usdc);
     await alpha.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "execute",
       args: [[{ fuse: MORPHO_SUPPLY_FUSE, data }]],
     });
@@ -369,8 +369,8 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
     // The market reads the position in assets. It differs from the amount entered by rounding of a few wei.
     const [position, idleNow] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [MORPHO_MARKET],
       }),
@@ -378,7 +378,7 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.ok(
@@ -389,7 +389,7 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
   });
 
   it("05 a balance updater refreshes the market after a day and total assets grow", async () => {
-    // On the access manager: the Atomist grants the role that unlocks updateMarketsBalances on the vault, as in S2.
+    // On the access manager: the Atomist grants the role that unlocks updateMarketsBalances on the Plasma Vault, as in S2.
     const [updaterHadRole] = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -412,19 +412,19 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
     assert.equal(updaterHasRole, true);
     await networkHelpers.time.increase(ONE_DAY);
     const totalAssetsBefore = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalAssets",
     });
     await balanceUpdater.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "updateMarketsBalances",
       args: [[MORPHO_MARKET]],
     });
     const totalAssetsAfter = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalAssets",
     });
 
@@ -440,8 +440,8 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
     });
     const [inMarketBefore, idleBefore] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [MORPHO_MARKET],
       }),
@@ -449,21 +449,21 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.ok(inMarketBefore > 0n);
     assert.equal(idleBefore, amount2000Usdc);
     await alpha.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "execute",
       args: [[{ fuse: MORPHO_SUPPLY_FUSE, data }]],
     });
     const [inMarketNow, idleAfterExit] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [MORPHO_MARKET],
       }),
@@ -471,7 +471,7 @@ describe("S13 Morpho Lend market on one Morpho Blue market", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.equal(inMarketNow, 0n);

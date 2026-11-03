@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { Address, PublicClient } from "viem";
-import { priceOracleAbi } from "../abis/priceOracle.abi.ts";
-import { vaultAbi } from "../abis/vault.abi.ts";
+import { priceOracleAbi } from "../abis/price-oracle.abi.ts";
+import { plasmaVaultAbi } from "../abis/plasma-vault.abi.ts";
 
 // Rates and prices are scaled to 18 decimals, as in a client.
 const WAD_DECIMALS = 18n;
@@ -15,14 +15,14 @@ const IMPACT_PERCENT_DIVISOR = 100;
 // so they compute them from the balance changes of the real transaction.
 export const previewValues = async ({
   publicClient,
-  vault,
+  plasmaVault,
   wethAddress,
   usdcAddress,
   youDeposit,
   youReceive,
 }: {
   publicClient: PublicClient;
-  vault: Address;
+  plasmaVault: Address;
   wethAddress: Address;
   usdcAddress: Address;
   youDeposit: bigint;
@@ -32,10 +32,10 @@ export const previewValues = async ({
   // Rate: USDC per 1 WETH, in USDC units (6 decimals).
   const rate = (youReceive * WAD) / youDeposit;
   assert.ok(rate > 0n, `rate ${rate}`);
-  // Both sides are valued with the vault's own oracle, never with aggregator-reported USD figures. Prices scale to 18 decimals.
+  // Both sides are valued with the Plasma Vault's own oracle, never with aggregator-reported USD figures. Prices scale to 18 decimals.
   const oracle = await publicClient.readContract({
-    address: vault,
-    abi: vaultAbi,
+    address: plasmaVault,
+    abi: plasmaVaultAbi,
     functionName: "getPriceOracleMiddleware",
   });
   const usd18 = async (token: Address, amount: bigint, decimals: bigint) => {

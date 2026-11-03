@@ -1,7 +1,7 @@
-// S10 Vault operations: read the DAO fee package, set management and performance fees, watch them
+// S10 Plasma Vault operations: read the DAO fee package, set management and performance fees, watch them
 // accrue and harvest them, cap the supply and turn on share transfers.
 // It stands alone: step 01 repeats S1's clone, Atomist grant and public switch in short, without a market,
-// so the vault runs on idle USDC.
+// so the Plasma Vault runs on idle USDC.
 // Every step is a real transaction on a Base fork, and a step depends on the steps above it.
 // The story skips simulation on purpose, to show the transaction flow. A real app on a real
 // chain should simulate before each transaction, to check gas usage and whether it reverts.
@@ -9,21 +9,21 @@ import assert from "node:assert/strict";
 import { before, describe, it } from "node:test";
 import { network } from "hardhat";
 import { erc20Abi, maxUint256, parseEther, parseEventLogs, parseUnits, toFunctionSelector, type Address } from "viem";
-import { accessManagerAbi } from "../abis/accessManager.abi.ts";
+import { accessManagerAbi } from "../abis/access-manager.abi.ts";
 import { factoryAbi } from "../abis/factory.abi.ts";
-import { factoryFeeAbi } from "../abis/factoryFee.abi.ts";
-import { feeManagerAbi } from "../abis/feeManager.abi.ts";
-import { vaultAbi } from "../abis/vault.abi.ts";
+import { factoryFeeAbi } from "../abis/factory-fee.abi.ts";
+import { feeManagerAbi } from "../abis/fee-manager.abi.ts";
+import { plasmaVaultAbi } from "../abis/plasma-vault.abi.ts";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory) and README.md (USDC).
 const FACTORY = "0x1455717668fA96534f675856347A973fA907e922";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 // USDC has 6 decimals.
 const USDC_DECIMALS = 6;
-// Vault shares have the asset's decimals plus 2.
-const VAULT_SHARE_DECIMALS = 8;
-const VAULT_NAME = "Story USDC";
-const VAULT_SYMBOL = "sUSDC";
+// Plasma Vault shares have the asset's decimals plus 2.
+const PLASMA_VAULT_SHARE_DECIMALS = 8;
+const PLASMA_VAULT_NAME = "Story USDC";
+const PLASMA_VAULT_SYMBOL = "sUSDC";
 const REDEMPTION_DELAY = 0n;
 const DAO_FEE_PACKAGE_INDEX = 0n;
 // An EOA holding about 158.3M USDC at the fork block, used to fund the depositor.
@@ -56,9 +56,9 @@ const amount2000Usdc = parseUnits("2000", USDC_DECIMALS);
 const amount1000Usdc = parseUnits("1000", USDC_DECIMALS);
 const amount100Usdc = parseUnits("100", USDC_DECIMALS);
 const amount1Usdc = parseUnits("1", USDC_DECIMALS);
-const amount50Shares = parseUnits("50", VAULT_SHARE_DECIMALS);
+const amount50Shares = parseUnits("50", PLASMA_VAULT_SHARE_DECIMALS);
 
-const amount10Shares = parseUnits("10", VAULT_SHARE_DECIMALS);
+const amount10Shares = parseUnits("10", PLASMA_VAULT_SHARE_DECIMALS);
 
 const GAS_TOP_UP = parseEther("1");
 // Totals add the DAO fee package to the recipient's fee.
@@ -72,8 +72,8 @@ const atomist = await viem.getWalletClient(ATOMIST);
 const depositor = await viem.getWalletClient(DEPOSITOR);
 const harvester = await viem.getWalletClient(HARVESTER);
 
-describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () => {
-  let vault: Address, feeManager: Address;
+describe("S10 Operate a USDC Plasma Vault: fees, supply cap and share transfers", () => {
+  let plasmaVault: Address, feeManager: Address;
 
   before(async () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
@@ -89,15 +89,15 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
     });
   });
 
-  it("01 clones a vault on DAO fee package 0, grants Atomist, goes public and takes a deposit, as in S1", async () => {
+  it("01 clones a Plasma Vault on DAO fee package 0, grants Atomist, goes public and takes a deposit, as in S1", async () => {
     // The last clone argument picks the DAO fee package by index.
     const hash = await owner.writeContract({
       address: FACTORY,
       abi: factoryAbi,
       functionName: "clone",
       args: [
-        VAULT_NAME,
-        VAULT_SYMBOL,
+        PLASMA_VAULT_NAME,
+        PLASMA_VAULT_SYMBOL,
         USDC,
         REDEMPTION_DELAY,
         OWNER,
@@ -107,11 +107,11 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
     const { logs } = await publicClient.waitForTransactionReceipt({ hash });
     const [created] = parseEventLogs({ abi: factoryAbi, logs, eventName: "FusionInstanceCreated" });
     assert.ok(created, "the receipt has no FusionInstanceCreated event");
-    vault = created.args.plasmaVault;
+    plasmaVault = created.args.plasmaVault;
     feeManager = created.args.feeManager;
     const accessManager = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getAccessManagerAddress",
     });
     const [[atomistHadRole], depositRoleBefore] = await Promise.all([
@@ -125,7 +125,7 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(atomistHadRole, false);
@@ -135,11 +135,11 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
         address: USDC,
         abi: erc20Abi,
         functionName: "allowance",
-        args: [DEPOSITOR, vault],
+        args: [DEPOSITOR, plasmaVault],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
@@ -154,27 +154,27 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
       args: [ATOMIST_ROLE, ATOMIST, NO_EXECUTION_DELAY],
     });
     await atomist.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToPublicVault",
     });
     await depositor.writeContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
-      args: [vault, amount2000Usdc],
+      args: [plasmaVault, amount2000Usdc],
     });
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "deposit",
       args: [amount1000Usdc, DEPOSITOR],
     });
 
     const [depositorShares, [atomistHasRole], depositRole] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
@@ -188,7 +188,7 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.ok(depositorShares > 0n);
@@ -199,12 +199,12 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [DEPOSITOR, vault],
+      args: [DEPOSITOR, plasmaVault],
     });
     assert.equal(depositorAllowanceUsdc, amount1000Usdc);
   });
 
-  it("02 reads the DAO fee package the vault was cloned with", async () => {
+  it("02 reads the DAO fee package the Plasma Vault was cloned with", async () => {
     // Fees are in basis points: 10000 = 100%. The DAO takes its share before any fee the Atomist sets.
     const [daoFeePackage] = await publicClient.readContract({
       address: FACTORY,
@@ -294,8 +294,8 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
       functionName: "MANAGEMENT_FEE_ACCOUNT",
     });
     const sharesBefore = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [managementFeeAccount],
     });
@@ -303,26 +303,26 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
 
     // In USDC, before any fee share exists. Deposit, mint, withdraw and redeem realize it.
     assert.ok((await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getUnrealizedManagementFee",
     })) > 0n);
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "deposit",
       args: [amount100Usdc, DEPOSITOR],
     });
     const [managementFeeAccountShares, unrealizedManagementFee] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [managementFeeAccount],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "getUnrealizedManagementFee",
       }),
     ]);
@@ -337,42 +337,42 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
       functionName: "PERFORMANCE_FEE_ACCOUNT",
     });
     const sharesBefore = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [performanceFeeAccount],
     });
-    // A USDC donation to the vault stands in for a gain. Real gains come from markets (S7).
+    // A USDC donation to the Plasma Vault stands in for a gain. Real gains come from markets (S7).
     const idleBefore = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "balanceOf",
-      args: [vault],
+      args: [plasmaVault],
     });
     await depositor.writeContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "transfer",
-      args: [vault, amount100Usdc],
+      args: [plasmaVault, amount100Usdc],
     });
     const idleAfterDonation = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "balanceOf",
-      args: [vault],
+      args: [plasmaVault],
     });
     assert.equal(idleAfterDonation - idleBefore, amount100Usdc);
     // Withdraw, redeem, execute and updateMarketsBalances realize the performance fee. A deposit does not.
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "withdraw",
       args: [amount1Usdc, DEPOSITOR, DEPOSITOR],
     });
 
     const performanceFeeAccountShares = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [performanceFeeAccount],
     });
@@ -387,16 +387,16 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
         functionName: "getIporDaoFeeRecipientAddress",
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [FEE_RECIPIENT],
       }),
     ]);
     const [daoBefore, managementFeeAccount, performanceFeeAccount, supplyBefore] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [dao],
       }),
@@ -411,8 +411,8 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
         functionName: "PERFORMANCE_FEE_ACCOUNT",
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalSupply",
       }),
     ]);
@@ -426,34 +426,34 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
 
     const [performanceFeeAccountShares, feeRecipientShares, daoShares] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [performanceFeeAccount],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [FEE_RECIPIENT],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [dao],
       }),
     ]);
     const totalSupplyShares = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalSupply",
     });
     assert.equal(totalSupplyShares, supplyBefore);
     // The recipient shares round down, so a few wei of shares (22 here) stay in a fee account.
     const managementFeeAccountShares = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [managementFeeAccount],
     });
@@ -464,35 +464,35 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
   });
 
   it("07 the Atomist caps the supply in shares and a deposit above the room reverts", async () => {
-    // The cap counts shares, with 8 decimals (USDC's 6 plus the vault's offset of 2). It defaults to the uint256 maximum.
+    // The cap counts shares, with 8 decimals (USDC's 6 plus the Plasma Vault's offset of 2). It defaults to the uint256 maximum.
     const totalSupply = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalSupply",
     });
     const totalSupplyCapBefore = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getTotalSupplyCap",
     });
     assert.equal(totalSupplyCapBefore, maxUint256);
     await atomist.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "setTotalSupplyCap",
       args: [totalSupply + amount50Shares],
     });
     const totalSupplyCapAfter = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getTotalSupplyCap",
     });
     assert.equal(totalSupplyCapAfter, totalSupply + amount50Shares);
 
     // maxDeposit gives the room left in assets, the value a deposit should show.
     const maxDeposit = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "maxDeposit",
       args: [DEPOSITOR],
     });
@@ -500,8 +500,8 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
     await assert.rejects(
       // Expected to revert: the deposit is 1 USDC over the room left.
       depositor.writeContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "deposit",
         args: [maxDeposit + amount1Usdc, DEPOSITOR],
       }),
@@ -511,11 +511,11 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
 
   it("08 share transfers are off until the Atomist enables them", async () => {
     await assert.rejects(
-      // Expected to revert: a new vault restricts transfer and transferFrom to TECH_VAULT_TRANSFER_SHARES_ROLE (7).
+      // Expected to revert: a new Plasma Vault restricts transfer and transferFrom to TECH_VAULT_TRANSFER_SHARES_ROLE (7).
       // Only the fee manager holds it, which is why step 06's harvest moves shares before enableTransferShares.
       depositor.writeContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "transfer",
         args: [SHARE_RECEIVER, amount10Shares],
       }),
@@ -523,27 +523,27 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
     );
     // Opens transfer and transferFrom to everyone. There is no call to turn them off again.
     await atomist.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "enableTransferShares",
     });
     const shareReceiverSharesBalance = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [SHARE_RECEIVER],
     });
     assert.equal(shareReceiverSharesBalance, 0n);
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "transfer",
       args: [SHARE_RECEIVER, amount10Shares],
     });
 
     const shareReceiverShares = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [SHARE_RECEIVER],
     });

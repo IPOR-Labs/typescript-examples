@@ -1,6 +1,6 @@
 // S1 Create and configure: clone a Plasma Vault from the factory, set up its roles,
-// install the Aave V3 Lend market and open the vault to every depositor.
-// This is the first story. Every later story starts from a vault built this way.
+// install the Aave V3 Lend market and open the Plasma Vault to every depositor.
+// This is the first story. Every later story starts from a Plasma Vault built this way.
 // Every step is a real transaction on a Base fork, and a step depends on the steps above it.
 // The story skips simulation on purpose, to show the transaction flow. A real app on a real
 // chain should simulate before each transaction, to check gas usage and whether it reverts.
@@ -8,9 +8,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { network } from "hardhat";
 import { parseEventLogs, pad, toFunctionSelector, isAddressEqual, zeroAddress, type Address } from "viem";
-import { accessManagerAbi } from "../abis/accessManager.abi.ts";
+import { accessManagerAbi } from "../abis/access-manager.abi.ts";
 import { factoryAbi } from "../abis/factory.abi.ts";
-import { vaultAbi } from "../abis/vault.abi.ts";
+import { plasmaVaultAbi } from "../abis/plasma-vault.abi.ts";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory, Aave V3 fuses),
 // mainnet/addresses.json at e228075 (BalanceFuseErc20) and README.md (USDC).
@@ -19,8 +19,8 @@ const AAVE_V3_SUPPLY_FUSE = "0x26fD6EF391E98C78CfCA27e00c3d15be4D941625";
 const AAVE_V3_BALANCE_FUSE = "0x952573Ec1B6895a88a95CA523097083d4da4D8e5";
 const ERC20_BALANCE_FUSE = "0x9ba147FC382DBf4D73512A45370ba0B70c25F6aa";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-const VAULT_NAME = "Story USDC";
-const VAULT_SYMBOL = "sUSDC";
+const PLASMA_VAULT_NAME = "Story USDC";
+const PLASMA_VAULT_SYMBOL = "sUSDC";
 const REDEMPTION_DELAY = 0n;
 const DAO_FEE_PACKAGE_INDEX = 0n;
 // The factory installs this fuse on every clone. From ipor-abi: mainnet/mainnet-base-fusion/addresses.json (BurnRequestFeeFuseV2).
@@ -51,18 +51,18 @@ const owner = await viem.getWalletClient(OWNER);
 const atomist = await viem.getWalletClient(ATOMIST);
 const fuseManager = await viem.getWalletClient(FUSE_MANAGER);
 
-describe("S1 Create and configure a USDC vault on Aave V3", () => {
-  let vault: Address, accessManager: Address;
+describe("S1 Create and configure a USDC Plasma Vault on Aave V3", () => {
+  let plasmaVault: Address, accessManager: Address;
 
-  it("01 clones a vault from the factory and reads the created addresses from the receipt", async () => {
+  it("01 clones a Plasma Vault from the factory and reads the created addresses from the receipt", async () => {
     // Arguments: share name and symbol, underlying token, redemption delay, owner, DAO fee package.
     const hash = await owner.writeContract({
       address: FACTORY,
       abi: factoryAbi,
       functionName: "clone",
       args: [
-        VAULT_NAME,
-        VAULT_SYMBOL,
+        PLASMA_VAULT_NAME,
+        PLASMA_VAULT_SYMBOL,
         USDC,
         REDEMPTION_DELAY,
         OWNER,
@@ -72,18 +72,18 @@ describe("S1 Create and configure a USDC vault on Aave V3", () => {
     const { logs } = await publicClient.waitForTransactionReceipt({ hash });
     const [created] = parseEventLogs({ abi: factoryAbi, logs, eventName: "FusionInstanceCreated" });
     assert.ok(created, "the receipt has no FusionInstanceCreated event");
-    vault = created.args.plasmaVault;
+    plasmaVault = created.args.plasmaVault;
     accessManager = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getAccessManagerAddress",
     });
 
-    assert.notEqual(vault, zeroAddress);
+    assert.notEqual(plasmaVault, zeroAddress);
     assert.notEqual(created.args.feeManager, zeroAddress);
     assert.ok(isAddressEqual(await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "asset",
     }), USDC));
     const [ownerHasRole] = await publicClient.readContract({
@@ -103,7 +103,7 @@ describe("S1 Create and configure a USDC vault on Aave V3", () => {
       args: [ATOMIST_ROLE, ATOMIST],
     });
     assert.equal(atomistHadRole, false);
-    // On the access manager: the Owner grants the Atomist role, which unlocks role grants and convertToPublicVault on the vault.
+    // On the access manager: the Owner grants the Atomist role, which unlocks role grants and convertToPublicVault on the Plasma Vault.
     await owner.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -147,14 +147,14 @@ describe("S1 Create and configure a USDC vault on Aave V3", () => {
     ]);
     assert.equal(fuseManagerHadRole, false);
     assert.equal(alphaHadRole, false);
-    // On the access manager: Fuse Manager unlocks addFuses and grantMarketSubstrates on the vault.
+    // On the access manager: Fuse Manager unlocks addFuses and grantMarketSubstrates on the Plasma Vault.
     await atomist.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "grantRole",
       args: [FUSE_MANAGER_ROLE, FUSE_MANAGER, NO_EXECUTION_DELAY],
     });
-    // On the access manager: Alpha unlocks execute on the vault.
+    // On the access manager: Alpha unlocks execute on the Plasma Vault.
     await atomist.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -184,8 +184,8 @@ describe("S1 Create and configure a USDC vault on Aave V3", () => {
     // grantMarketSubstrates replaces the market's whole list. An address substrate is left-padded to 32 bytes.
     const usdcSubstrate = pad(USDC, { size: 32 });
     const fusesBefore = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getFuses",
     });
     assert.deepEqual(fusesBefore, [BURN_REQUEST_FEE_FUSE]);
@@ -198,38 +198,38 @@ describe("S1 Create and configure a USDC vault on Aave V3", () => {
       aaveV3MarketDependencyBalanceGraphBefore,
     ] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isFuseSupported",
         args: [AAVE_V3_SUPPLY_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [AAVE_V3_MARKET, AAVE_V3_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [ERC20_VAULT_BALANCE_MARKET, ERC20_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [AAVE_V3_MARKET, usdcSubstrate],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [ERC20_VAULT_BALANCE_MARKET, usdcSubstrate],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "getDependencyBalanceGraph",
         args: [AAVE_V3_MARKET],
       }),
@@ -242,40 +242,40 @@ describe("S1 Create and configure a USDC vault on Aave V3", () => {
     assert.deepEqual(aaveV3MarketDependencyBalanceGraphBefore, []);
 
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "addFuses",
       args: [[AAVE_V3_SUPPLY_FUSE]],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "addBalanceFuse",
       args: [AAVE_V3_MARKET, AAVE_V3_BALANCE_FUSE],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "addBalanceFuse",
       args: [ERC20_VAULT_BALANCE_MARKET, ERC20_BALANCE_FUSE],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "grantMarketSubstrates",
       args: [AAVE_V3_MARKET, [usdcSubstrate]],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "grantMarketSubstrates",
       args: [ERC20_VAULT_BALANCE_MARKET, [usdcSubstrate]],
     });
-    // The ERC20 balance market values the vault's other tokens. Its fuse skips the underlying asset (USDC here): idle USDC is counted directly in totalAssets.
-    // The dependency makes the vault refresh the ERC20 balance market whenever the Aave V3 market balance is updated.
+    // The ERC20 balance market values the Plasma Vault's other tokens. Its fuse skips the underlying asset (USDC here): idle USDC is counted directly in totalAssets.
+    // The dependency makes the Plasma Vault refresh the ERC20 balance market whenever the Aave V3 market balance is updated.
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "updateDependencyBalanceGraphs",
       args: [[AAVE_V3_MARKET], [[ERC20_VAULT_BALANCE_MARKET]]],
     });
@@ -290,43 +290,43 @@ describe("S1 Create and configure a USDC vault on Aave V3", () => {
       aaveV3MarketDependencyBalanceGraph,
     ] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "getFuses",
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isFuseSupported",
         args: [AAVE_V3_SUPPLY_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [AAVE_V3_MARKET, AAVE_V3_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [ERC20_VAULT_BALANCE_MARKET, ERC20_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [AAVE_V3_MARKET, usdcSubstrate],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [ERC20_VAULT_BALANCE_MARKET, usdcSubstrate],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "getDependencyBalanceGraph",
         args: [AAVE_V3_MARKET],
       }),
@@ -345,12 +345,12 @@ describe("S1 Create and configure a USDC vault on Aave V3", () => {
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "getTargetFunctionRole",
-      args: [vault, DEPOSIT_SELECTOR],
+      args: [plasmaVault, DEPOSIT_SELECTOR],
     });
     assert.notEqual(depositRoleBefore, PUBLIC_ROLE);
     await atomist.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToPublicVault",
     });
 
@@ -359,7 +359,7 @@ describe("S1 Create and configure a USDC vault on Aave V3", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, toFunctionSelector(signature)],
+        args: [plasmaVault, toFunctionSelector(signature)],
       });
       assert.equal(role, PUBLIC_ROLE, signature);
     }

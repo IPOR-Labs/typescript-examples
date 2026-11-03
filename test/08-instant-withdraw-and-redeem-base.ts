@@ -1,6 +1,6 @@
 // S8 Instant withdraw and redeem: withdraw from idle funds, see the shortfall revert, then add an
 // instant-withdrawal fuse that unwinds Aave V3 on demand, and see how the withdraw fee behaves.
-// It follows S1: steps 01 and 02 repeat S1's setup in short, then a depositor funds the vault.
+// It follows S1: steps 01 and 02 repeat S1's setup in short, then a depositor funds the Plasma Vault.
 // Every step is a real transaction on a Base fork, and a step depends on the steps above it.
 // The story skips simulation on purpose, to show the transaction flow. A real app on a real
 // chain should simulate before each transaction, to check gas usage and whether it reverts.
@@ -24,11 +24,11 @@ import {
   zeroHash,
   type Address,
 } from "viem";
-import { aaveV3SupplyFuseAbi } from "../abis/aaveV3SupplyFuse.abi.ts";
-import { accessManagerAbi } from "../abis/accessManager.abi.ts";
+import { aaveV3SupplyFuseAbi } from "../abis/aave-v3-supply-fuse.abi.ts";
+import { accessManagerAbi } from "../abis/access-manager.abi.ts";
 import { factoryAbi } from "../abis/factory.abi.ts";
-import { vaultAbi } from "../abis/vault.abi.ts";
-import { withdrawManagerAbi } from "../abis/withdrawManager.abi.ts";
+import { plasmaVaultAbi } from "../abis/plasma-vault.abi.ts";
+import { withdrawManagerAbi } from "../abis/withdraw-manager.abi.ts";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory, Aave V3 fuses),
 // mainnet/addresses.json at e228075 (BalanceFuseErc20) and README.md (USDC).
@@ -39,13 +39,13 @@ const ERC20_BALANCE_FUSE = "0x9ba147FC382DBf4D73512A45370ba0B70c25F6aa";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 // USDC has 6 decimals.
 const USDC_DECIMALS = 6;
-const VAULT_NAME = "Story USDC";
-const VAULT_SYMBOL = "sUSDC";
+const PLASMA_VAULT_NAME = "Story USDC";
+const PLASMA_VAULT_SYMBOL = "sUSDC";
 const REDEMPTION_DELAY = 0n;
 const DAO_FEE_PACKAGE_INDEX = 0n;
 // An EOA that holds enough USDC on Base at the fork block to fund the depositor.
 const USDC_WHALE = "0x8da91A6298eA5d1A8Bc985e99798fd0A0f05701a";
-// The vault keeps its Withdraw Manager address in this storage slot and has no getter for it
+// The Plasma Vault keeps its Withdraw Manager address in this storage slot and has no getter for it
 // (WITHDRAW_MANAGER in contracts/libraries/PlasmaVaultStorageLib.sol:722, ipor-fusion 004d054).
 const WITHDRAW_MANAGER_SLOT = "0x465d2ff0062318fe6f4c7e9ac78cfcd70bc86a1d992722875ef83a9770513100";
 
@@ -101,8 +101,8 @@ const fuseManager = await viem.getWalletClient(FUSE_MANAGER);
 const alpha = await viem.getWalletClient(ALPHA);
 const depositor = await viem.getWalletClient(DEPOSITOR);
 
-describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
-  let vault: Address, accessManager: Address, withdrawManager: Address, maxInstant: bigint;
+describe("S8 Instant withdraw and redeem on a USDC Plasma Vault with Aave V3", () => {
+  let plasmaVault: Address, accessManager: Address, withdrawManager: Address, maxInstant: bigint;
 
   before(async () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
@@ -118,14 +118,14 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     });
   });
 
-  it("01 clones a vault, grants its roles as in S1, and reads the Withdraw Manager from storage", async () => {
+  it("01 clones a Plasma Vault, grants its roles as in S1, and reads the Withdraw Manager from storage", async () => {
     const hash = await owner.writeContract({
       address: FACTORY,
       abi: factoryAbi,
       functionName: "clone",
       args: [
-        VAULT_NAME,
-        VAULT_SYMBOL,
+        PLASMA_VAULT_NAME,
+        PLASMA_VAULT_SYMBOL,
         USDC,
         REDEMPTION_DELAY,
         OWNER,
@@ -135,10 +135,10 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     const { logs } = await publicClient.waitForTransactionReceipt({ hash });
     const [created] = parseEventLogs({ abi: factoryAbi, logs, eventName: "FusionInstanceCreated" });
     assert.ok(created, "the receipt has no FusionInstanceCreated event");
-    vault = created.args.plasmaVault;
+    plasmaVault = created.args.plasmaVault;
     accessManager = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getAccessManagerAddress",
     });
     const [[atomistHadRole], [fuseManagerHadRole], [alphaHadRole]] = await Promise.all([
@@ -164,21 +164,21 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     assert.equal(atomistHadRole, false);
     assert.equal(fuseManagerHadRole, false);
     assert.equal(alphaHadRole, false);
-    // On the access manager: the Owner grants the Atomist role, which unlocks role grants and convertToPublicVault on the vault.
+    // On the access manager: the Owner grants the Atomist role, which unlocks role grants and convertToPublicVault on the Plasma Vault.
     await owner.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "grantRole",
       args: [ATOMIST_ROLE, ATOMIST, NO_EXECUTION_DELAY],
     });
-    // On the access manager: Fuse Manager unlocks addFuses and grantMarketSubstrates on the vault.
+    // On the access manager: Fuse Manager unlocks addFuses and grantMarketSubstrates on the Plasma Vault.
     await atomist.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "grantRole",
       args: [FUSE_MANAGER_ROLE, FUSE_MANAGER, NO_EXECUTION_DELAY],
     });
-    // On the access manager: Alpha unlocks execute on the vault.
+    // On the access manager: Alpha unlocks execute on the Plasma Vault.
     await atomist.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -210,16 +210,16 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     assert.equal(alphaHasRole, true);
     // The event omits the Withdraw Manager and clone's return value needs a simulation, so read the slot.
     // The slot holds the address left-padded to 32 bytes.
-    const word = await publicClient.getStorageAt({ address: vault, slot: WITHDRAW_MANAGER_SLOT });
-    assert.ok(word && word !== zeroHash, "the vault has no Withdraw Manager");
+    const word = await publicClient.getStorageAt({ address: plasmaVault, slot: WITHDRAW_MANAGER_SLOT });
+    assert.ok(word && word !== zeroHash, "the Plasma Vault has no Withdraw Manager");
     withdrawManager = getAddress(slice(word, 12));
 
-    assert.notEqual(vault, zeroAddress);
+    assert.notEqual(plasmaVault, zeroAddress);
     assert.ok(isAddressEqual(await publicClient.readContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
       functionName: "getPlasmaVaultAddress",
-    }), vault));
+    }), plasmaVault));
   });
 
   it("02 installs Aave V3 and opens deposits to everyone, as in S1", async () => {
@@ -234,38 +234,38 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       depositTargetFunctionRoleBefore,
     ] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isFuseSupported",
         args: [AAVE_V3_SUPPLY_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [AAVE_V3_MARKET, AAVE_V3_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [ERC20_VAULT_BALANCE_MARKET, ERC20_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [AAVE_V3_MARKET, usdcSubstrate],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [ERC20_VAULT_BALANCE_MARKET, usdcSubstrate],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "getDependencyBalanceGraph",
         args: [AAVE_V3_MARKET],
       }),
@@ -273,7 +273,7 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(aaveV3SupplyFuseSupportedBefore, false);
@@ -285,44 +285,44 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     assert.notEqual(depositTargetFunctionRoleBefore, PUBLIC_ROLE);
 
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "addFuses",
       args: [[AAVE_V3_SUPPLY_FUSE]],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "addBalanceFuse",
       args: [AAVE_V3_MARKET, AAVE_V3_BALANCE_FUSE],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "addBalanceFuse",
       args: [ERC20_VAULT_BALANCE_MARKET, ERC20_BALANCE_FUSE],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "grantMarketSubstrates",
       args: [AAVE_V3_MARKET, [usdcSubstrate]],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "grantMarketSubstrates",
       args: [ERC20_VAULT_BALANCE_MARKET, [usdcSubstrate]],
     });
     await fuseManager.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "updateDependencyBalanceGraphs",
       args: [[AAVE_V3_MARKET], [[ERC20_VAULT_BALANCE_MARKET]]],
     });
     await atomist.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToPublicVault",
     });
 
@@ -336,38 +336,38 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       depositTargetFunctionRole,
     ] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isFuseSupported",
         args: [AAVE_V3_SUPPLY_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [AAVE_V3_MARKET, AAVE_V3_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isBalanceFuseSupported",
         args: [ERC20_VAULT_BALANCE_MARKET, ERC20_BALANCE_FUSE],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [AAVE_V3_MARKET, usdcSubstrate],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "isMarketSubstrateGranted",
         args: [ERC20_VAULT_BALANCE_MARKET, usdcSubstrate],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "getDependencyBalanceGraph",
         args: [AAVE_V3_MARKET],
       }),
@@ -375,7 +375,7 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(aaveV3SupplyFuseSupported, true);
@@ -393,34 +393,34 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [DEPOSITOR, vault],
+      args: [DEPOSITOR, plasmaVault],
     });
     assert.equal(allowanceBefore, 0n);
     await depositor.writeContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
-      args: [vault, amount1000Usdc],
+      args: [plasmaVault, amount1000Usdc],
     });
     const [allowanceAfter, idleBeforeDeposit] = await Promise.all([
       publicClient.readContract({
         address: USDC,
         abi: erc20Abi,
         functionName: "allowance",
-        args: [DEPOSITOR, vault],
+        args: [DEPOSITOR, plasmaVault],
       }),
       publicClient.readContract({
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.equal(allowanceAfter, amount1000Usdc);
     assert.equal(idleBeforeDeposit, 0n);
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "deposit",
       args: [amount1000Usdc, DEPOSITOR],
     });
@@ -429,11 +429,11 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [AAVE_V3_MARKET],
       }),
@@ -446,8 +446,8 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       args: [{ asset: USDC, amount: amount600Usdc, userEModeCategoryId: E_MODE_NONE }],
     });
     await alpha.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "execute",
       args: [[{ fuse: AAVE_V3_SUPPLY_FUSE, data }]],
     });
@@ -456,13 +456,13 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       address: USDC,
       abi: erc20Abi,
       functionName: "balanceOf",
-      args: [vault],
+      args: [plasmaVault],
     });
     assert.equal(idle, amount400Usdc);
     // Aave rounds the aToken balance down by at most a unit or two.
     const inAaveAfter = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalAssetsInMarket",
       args: [AAVE_V3_MARKET],
     });
@@ -472,15 +472,15 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
   it("04 computes Max instant withdraw from idle funds, with no instant-withdrawal fuses", async () => {
     // Without instant-withdrawal fuses, only idle USDC can pay, less what released requests reserve (S9).
     const depositorShares = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [DEPOSITOR],
     });
     const [balanceInAssets, sharesToRelease] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "convertToAssets",
         args: [depositorShares],
       }),
@@ -496,11 +496,11 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "convertToAssets",
         args: [sharesToRelease],
       }),
@@ -515,10 +515,10 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
   });
 
   it("05 a withdraw of one unit more than Max instant reverts in the USDC transfer", async () => {
-    // maxWithdraw passes (it ignores liquidity), the vault has no fuse to unwind Aave, so USDC's transfer fails.
+    // maxWithdraw passes (it ignores liquidity), the Plasma Vault has no fuse to unwind Aave, so USDC's transfer fails.
     await assert.rejects(depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "withdraw",
       args: [maxInstant + ONE_USDC_BASE_UNIT, DEPOSITOR, DEPOSITOR],
     }), /ERC20: transfer amount exceeds balance/);
@@ -536,13 +536,13 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.equal(idleBefore, maxInstant);
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "withdraw",
       args: [maxInstant, DEPOSITOR, DEPOSITOR],
     });
@@ -558,7 +558,7 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.equal(depositorUsdc - usdcBefore, maxInstant);
@@ -573,7 +573,7 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       args: [CONFIG_INSTANT_WITHDRAWAL_FUSES_ROLE, ATOMIST],
     });
     assert.equal(atomistHadRole900, false);
-    // On the access manager: role 900 unlocks configureInstantWithdrawalFuses on the vault. No address holds it after clone.
+    // On the access manager: role 900 unlocks configureInstantWithdrawalFuses on the Plasma Vault. No address holds it after clone.
     await atomist.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -588,33 +588,33 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
         args: [CONFIG_INSTANT_WITHDRAWAL_FUSES_ROLE, ATOMIST],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "getInstantWithdrawalFuses",
       }),
     ]);
     assert.equal(atomistHasRole900, true);
     assert.deepEqual(fusesBefore, []);
-    // The fuse's instantWithdraw takes [amount, asset]. params[0] is a placeholder: the vault fills in the amount at withdraw time.
+    // The fuse's instantWithdraw takes [amount, asset]. params[0] is a placeholder: the Plasma Vault fills in the amount at withdraw time.
     const params = [zeroHash, pad(USDC, { size: 32 })];
     await atomist.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "configureInstantWithdrawalFuses",
       args: [[{ fuse: AAVE_V3_SUPPLY_FUSE, params }]],
     });
 
     const fuses = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getInstantWithdrawalFuses",
     });
     assert.equal(fuses.length, 1);
     assert.ok(fuses[0] && isAddressEqual(fuses[0], AAVE_V3_SUPPLY_FUSE));
     // Params are stored per fuse and per position in the list. The chain returns hex in lower case.
     const stored = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getInstantWithdrawalFusesParams",
       args: [AAVE_V3_SUPPLY_FUSE, FIRST_PARAMS_INDEX],
     });
@@ -622,17 +622,17 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
   });
 
   it("08 reads Max instant withdraw by a real redeem of the whole balance in a snapshot, then reverts it", async () => {
-    // With fuses, what the vault can pay depends on the market, so the formula no longer holds: try it for real and undo.
+    // With fuses, what the Plasma Vault can pay depends on the market, so the formula no longer holds: try it for real and undo.
     const [shares, aaveBefore, usdcBefore] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [AAVE_V3_MARKET],
       }),
@@ -645,8 +645,8 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     ]);
     const snapshot = await networkHelpers.takeSnapshot();
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "redeem",
       args: [shares, DEPOSITOR, DEPOSITOR],
     });
@@ -666,8 +666,8 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     // The snapshot left no trace: same shares, same USDC, same market balance.
     const [depositorShares, depositorUsdcAfterRestore, inAave] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
@@ -678,8 +678,8 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
         args: [DEPOSITOR],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [AAVE_V3_MARKET],
       }),
@@ -692,8 +692,8 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
   it("09 a withdraw above idle now succeeds and the fuse unwinds Aave V3", async () => {
     const [aaveBefore, usdcBefore, idle] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [AAVE_V3_MARKET],
       }),
@@ -707,13 +707,13 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.ok(idle < amount200Usdc);
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "withdraw",
       args: [amount200Usdc, DEPOSITOR, DEPOSITOR],
     });
@@ -726,8 +726,8 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
         args: [DEPOSITOR],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssetsInMarket",
         args: [AAVE_V3_MARKET],
       }),
@@ -783,14 +783,14 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     // A client's "Payout" shows 100 - 1% = 99 USDC here, and is wrong: withdraw pays the full amount and burns the fee as extra shares.
     const [sharesFor100, sharesBefore, usdcBefore] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "convertToShares",
         args: [amount100Usdc],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
@@ -802,14 +802,14 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       }),
     ]);
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "withdraw",
       args: [amount100Usdc, DEPOSITOR, DEPOSITOR],
     });
     const depositorShares = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [DEPOSITOR],
     });
@@ -839,15 +839,15 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
         functionName: "getWithdrawFee",
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
     ]);
     const assets = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToAssets",
       args: [shares],
     });
@@ -860,8 +860,8 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       args: [DEPOSITOR],
     });
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "redeem",
       args: [shares, DEPOSITOR, DEPOSITOR],
     });
@@ -881,8 +881,8 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       `received ${received}, Payout formula ${payout}`,
     );
     const depositorShares = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [DEPOSITOR],
     });

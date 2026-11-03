@@ -1,7 +1,7 @@
-// S5 Token zaps: deposit ETH, wstETH and USDC into vaults whose asset is another token, through the
+// S5 Token zaps: deposit ETH, wstETH and USDC into Plasma Vaults whose asset is another token, through the
 // deployed zap contract ERC4626ZapInWithNativeToken. The zap runs the calls it is given (wrap, stake,
-// unwrap, mint) and deposits the resulting vault asset in the same transaction.
-// The vaults are set up as in S1, without a market: the zapped assets stay idle in the vault.
+// unwrap, mint) and deposits the resulting Plasma Vault asset in the same transaction.
+// The Plasma Vaults are set up as in S1, without a market: the zapped assets stay idle in the Plasma Vault.
 // The values shared by every deposit method (balance, public, paused, maxDeposit, withdraw note)
 // are read as in S3. This story adds the values specific to a zap: the expected output, the slippage minimum
 // passed as minAmountToDeposit, the approval spender and the native token's USD price.
@@ -22,15 +22,15 @@ import {
   zeroAddress,
   type Address,
 } from "viem";
-import { accessManagerAbi } from "../abis/accessManager.abi.ts";
+import { accessManagerAbi } from "../abis/access-manager.abi.ts";
 import { allowanceAbi } from "../abis/allowance.abi.ts";
 import { chainlinkAbi } from "../abis/chainlink.abi.ts";
-import { creditEnforcerAbi } from "../abis/creditEnforcer.abi.ts";
+import { creditEnforcerAbi } from "../abis/credit-enforcer.abi.ts";
 import { factoryAbi } from "../abis/factory.abi.ts";
-import { stEthAbi } from "../abis/stEth.abi.ts";
-import { vaultAbi } from "../abis/vault.abi.ts";
+import { stEthAbi } from "../abis/st-eth.abi.ts";
+import { plasmaVaultAbi } from "../abis/plasma-vault.abi.ts";
 import { wethAbi } from "../abis/weth.abi.ts";
-import { wstEthAbi } from "../abis/wstEth.abi.ts";
+import { wstEthAbi } from "../abis/wst-eth.abi.ts";
 import { zapAbi } from "../abis/zap.abi.ts";
 
 // Ethereum addresses, from ipor-abi: mainnet/mainnet-ethereum-fusion/addresses.json at 9d1a7c7 (factory, zap)
@@ -72,12 +72,12 @@ const DEPOSIT_SELECTOR = toFunctionSelector("deposit(uint256,address)");
 
 const REDEMPTION_DELAY = 0n;
 const DAO_FEE_PACKAGE_INDEX = 0n;
-const WETH_VAULT_NAME = "Story WETH";
-const WETH_VAULT_SYMBOL = "sWETH";
-const STETH_VAULT_NAME = "Story stETH";
-const STETH_VAULT_SYMBOL = "sstETH";
-const RUSD_VAULT_NAME = "Story rUSD";
-const RUSD_VAULT_SYMBOL = "srUSD";
+const WETH_PLASMA_VAULT_NAME = "Story WETH";
+const WETH_PLASMA_VAULT_SYMBOL = "sWETH";
+const STETH_PLASMA_VAULT_NAME = "Story stETH";
+const STETH_PLASMA_VAULT_SYMBOL = "sstETH";
+const RUSD_PLASMA_VAULT_NAME = "Story rUSD";
+const RUSD_PLASMA_VAULT_SYMBOL = "srUSD";
 
 const amount1Eth = parseEther("1");
 const amount1WstEth = parseEther("1");
@@ -96,16 +96,16 @@ const atomist = await viem.getWalletClient(ATOMIST);
 const depositor = await viem.getWalletClient(DEPOSITOR);
 
 describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rUSD", () => {
-  let wethVault: Address, stEthVault: Address, rUsdVault: Address;
+  let wethPlasmaVault: Address, stEthPlasmaVault: Address, rUsdPlasmaVault: Address;
 
-  it("01 clones a WETH, an stETH and an rUSD vault and opens each to every depositor (see S1)", async () => {
+  it("01 clones a WETH, an stETH and an rUSD Plasma Vault and opens each to every depositor (see S1)", async () => {
     const wethCloneHash = await owner.writeContract({
       address: FACTORY,
       abi: factoryAbi,
       functionName: "clone",
       args: [
-        WETH_VAULT_NAME,
-        WETH_VAULT_SYMBOL,
+        WETH_PLASMA_VAULT_NAME,
+        WETH_PLASMA_VAULT_SYMBOL,
         WETH,
         REDEMPTION_DELAY,
         OWNER,
@@ -119,10 +119,10 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
       eventName: "FusionInstanceCreated",
     });
     assert.ok(wethCreated, "the receipt has no FusionInstanceCreated event");
-    wethVault = wethCreated.args.plasmaVault;
+    wethPlasmaVault = wethCreated.args.plasmaVault;
     const wethAccessManager = await publicClient.readContract({
-      address: wethVault,
-      abi: vaultAbi,
+      address: wethPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getAccessManagerAddress",
     });
     const [wethAtomistHadRole] = await publicClient.readContract({
@@ -150,21 +150,21 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
         address: wethAccessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [wethVault, DEPOSIT_SELECTOR],
+        args: [wethPlasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(wethAtomistHasRole, true);
     assert.notEqual(wethDepositRoleBefore, PUBLIC_ROLE);
     await atomist.writeContract({
-      address: wethVault,
-      abi: vaultAbi,
+      address: wethPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToPublicVault",
     });
     const wethDepositRole = await publicClient.readContract({
       address: wethAccessManager,
       abi: accessManagerAbi,
       functionName: "getTargetFunctionRole",
-      args: [wethVault, DEPOSIT_SELECTOR],
+      args: [wethPlasmaVault, DEPOSIT_SELECTOR],
     });
     assert.equal(wethDepositRole, PUBLIC_ROLE);
 
@@ -173,8 +173,8 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
       abi: factoryAbi,
       functionName: "clone",
       args: [
-        STETH_VAULT_NAME,
-        STETH_VAULT_SYMBOL,
+        STETH_PLASMA_VAULT_NAME,
+        STETH_PLASMA_VAULT_SYMBOL,
         STETH,
         REDEMPTION_DELAY,
         OWNER,
@@ -188,10 +188,10 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
       eventName: "FusionInstanceCreated",
     });
     assert.ok(stEthCreated, "the receipt has no FusionInstanceCreated event");
-    stEthVault = stEthCreated.args.plasmaVault;
+    stEthPlasmaVault = stEthCreated.args.plasmaVault;
     const stEthAccessManager = await publicClient.readContract({
-      address: stEthVault,
-      abi: vaultAbi,
+      address: stEthPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getAccessManagerAddress",
     });
     const [stEthAtomistHadRole] = await publicClient.readContract({
@@ -219,21 +219,21 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
         address: stEthAccessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [stEthVault, DEPOSIT_SELECTOR],
+        args: [stEthPlasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(stEthAtomistHasRole, true);
     assert.notEqual(stEthDepositRoleBefore, PUBLIC_ROLE);
     await atomist.writeContract({
-      address: stEthVault,
-      abi: vaultAbi,
+      address: stEthPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToPublicVault",
     });
     const stEthDepositRole = await publicClient.readContract({
       address: stEthAccessManager,
       abi: accessManagerAbi,
       functionName: "getTargetFunctionRole",
-      args: [stEthVault, DEPOSIT_SELECTOR],
+      args: [stEthPlasmaVault, DEPOSIT_SELECTOR],
     });
     assert.equal(stEthDepositRole, PUBLIC_ROLE);
 
@@ -242,8 +242,8 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
       abi: factoryAbi,
       functionName: "clone",
       args: [
-        RUSD_VAULT_NAME,
-        RUSD_VAULT_SYMBOL,
+        RUSD_PLASMA_VAULT_NAME,
+        RUSD_PLASMA_VAULT_SYMBOL,
         RUSD,
         REDEMPTION_DELAY,
         OWNER,
@@ -257,10 +257,10 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
       eventName: "FusionInstanceCreated",
     });
     assert.ok(rUsdCreated, "the receipt has no FusionInstanceCreated event");
-    rUsdVault = rUsdCreated.args.plasmaVault;
+    rUsdPlasmaVault = rUsdCreated.args.plasmaVault;
     const rUsdAccessManager = await publicClient.readContract({
-      address: rUsdVault,
-      abi: vaultAbi,
+      address: rUsdPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getAccessManagerAddress",
     });
     const [rUsdAtomistHadRole] = await publicClient.readContract({
@@ -288,44 +288,44 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
         address: rUsdAccessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [rUsdVault, DEPOSIT_SELECTOR],
+        args: [rUsdPlasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(rUsdAtomistHasRole, true);
     assert.notEqual(rUsdDepositRoleBefore, PUBLIC_ROLE);
     await atomist.writeContract({
-      address: rUsdVault,
-      abi: vaultAbi,
+      address: rUsdPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToPublicVault",
     });
     const rUsdDepositRole = await publicClient.readContract({
       address: rUsdAccessManager,
       abi: accessManagerAbi,
       functionName: "getTargetFunctionRole",
-      args: [rUsdVault, DEPOSIT_SELECTOR],
+      args: [rUsdPlasmaVault, DEPOSIT_SELECTOR],
     });
     assert.equal(rUsdDepositRole, PUBLIC_ROLE);
 
-    const [wethVaultAssets, stEthVaultAssets, rUsdVaultAssets] = await Promise.all([
+    const [wethPlasmaVaultAssets, stEthPlasmaVaultAssets, rUsdPlasmaVaultAssets] = await Promise.all([
       publicClient.readContract({
-        address: wethVault,
-        abi: vaultAbi,
+        address: wethPlasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssets",
       }),
       publicClient.readContract({
-        address: stEthVault,
-        abi: vaultAbi,
+        address: stEthPlasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssets",
       }),
       publicClient.readContract({
-        address: rUsdVault,
-        abi: vaultAbi,
+        address: rUsdPlasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssets",
       }),
     ]);
-    assert.equal(wethVaultAssets, 0n);
-    assert.equal(stEthVaultAssets, 0n);
-    assert.equal(rUsdVaultAssets, 0n);
+    assert.equal(wethPlasmaVaultAssets, 0n);
+    assert.equal(stEthPlasmaVaultAssets, 0n);
+    assert.equal(rUsdPlasmaVaultAssets, 0n);
   });
 
   it("02 reads the native ETH price from Chainlink, as a client prices an ETH amount", async () => {
@@ -351,21 +351,21 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     );
   });
 
-  it("03 Wrap ETH: the zap wraps ETH into WETH and deposits it into the WETH vault", async () => {
+  it("03 Wrap ETH: the zap wraps ETH into WETH and deposits it into the WETH Plasma Vault", async () => {
     // Wrap ETH has a 1:1 rate and no slippage option: the minimum is the exact expected output.
     const expected = amount1Eth;
     const minimum = expected;
     // ETH is sent as the transaction value, so there is no approval. The zap deposits its whole WETH balance,
     // which must reach minAmountToDeposit.
-    const wethVaultTotalAssets = await publicClient.readContract({
-      address: wethVault,
-      abi: vaultAbi,
+    const wethPlasmaVaultTotalAssets = await publicClient.readContract({
+      address: wethPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalAssets",
     });
-    assert.equal(wethVaultTotalAssets, 0n);
+    assert.equal(wethPlasmaVaultTotalAssets, 0n);
     await depositor.writeContract({
       address: ZAP, abi: zapAbi, functionName: "zapIn", value: amount1Eth,
-      args: [{ vault: wethVault, receiver: DEPOSITOR, minAmountToDeposit: minimum, assetsToRefundToSender: [], calls: [
+      args: [{ vault: wethPlasmaVault, receiver: DEPOSITOR, minAmountToDeposit: minimum, assetsToRefundToSender: [], calls: [
         {
           target: WETH,
           data: encodeFunctionData({ abi: wethAbi, functionName: "deposit" }),
@@ -373,19 +373,19 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
         },
         {
           target: WETH,
-          data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [wethVault, maxUint256] }),
+          data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [wethPlasmaVault, maxUint256] }),
           nativeTokenAmount: NO_NATIVE_TOKEN,
         },
       ] }],
     });
     const [wethTotalAssets, wethDepositorAssetsShares] = await Promise.all([
       publicClient.readContract({
-        address: wethVault,
-        abi: vaultAbi,
+        address: wethPlasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssets",
       }),
       publicClient.readContract({
-        address: wethVault,
+        address: wethPlasmaVault,
         abi: erc20Abi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
@@ -393,27 +393,27 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     ]);
     assert.ok(wethTotalAssets >= minimum);
     const wethDepositorAssets = await publicClient.readContract({
-      address: wethVault,
-      abi: vaultAbi,
+      address: wethPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToAssets",
       args: [wethDepositorAssetsShares],
     });
     assert.ok(wethDepositorAssets >= minimum);
   });
 
-  it("04 Stake ETH: the zap stakes ETH with Lido and deposits the stETH into the stETH vault", async () => {
+  it("04 Stake ETH: the zap stakes ETH with Lido and deposits the stETH into the stETH Plasma Vault", async () => {
     // Lido mints stETH 1:1 for ETH, but stETH balances round down by 1 to 2 wei: the minimum is 0.5% below.
     const expected = amount1Eth;
     const minimum = (expected * (WAD - SLIPPAGE)) / WAD;
-    const stEthVaultTotalAssets = await publicClient.readContract({
-      address: stEthVault,
-      abi: vaultAbi,
+    const stEthPlasmaVaultTotalAssets = await publicClient.readContract({
+      address: stEthPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalAssets",
     });
-    assert.equal(stEthVaultTotalAssets, 0n);
+    assert.equal(stEthPlasmaVaultTotalAssets, 0n);
     await depositor.writeContract({
       address: ZAP, abi: zapAbi, functionName: "zapIn", value: amount1Eth,
-      args: [{ vault: stEthVault, receiver: DEPOSITOR, minAmountToDeposit: minimum, assetsToRefundToSender: [], calls: [
+      args: [{ vault: stEthPlasmaVault, receiver: DEPOSITOR, minAmountToDeposit: minimum, assetsToRefundToSender: [], calls: [
         {
           target: STETH,
           data: encodeFunctionData({ abi: stEthAbi, functionName: "submit", args: [zeroAddress] }),
@@ -421,19 +421,19 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
         },
         {
           target: STETH,
-          data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [stEthVault, maxUint256] }),
+          data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [stEthPlasmaVault, maxUint256] }),
           nativeTokenAmount: NO_NATIVE_TOKEN,
         },
       ] }],
     });
     const [stEthTotalAssets, stEthDepositorAssetsShares] = await Promise.all([
       publicClient.readContract({
-        address: stEthVault,
-        abi: vaultAbi,
+        address: stEthPlasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssets",
       }),
       publicClient.readContract({
-        address: stEthVault,
+        address: stEthPlasmaVault,
         abi: erc20Abi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
@@ -441,15 +441,15 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     ]);
     assert.ok(stEthTotalAssets >= minimum);
     const stEthDepositorAssets = await publicClient.readContract({
-      address: stEthVault,
-      abi: vaultAbi,
+      address: stEthPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToAssets",
       args: [stEthDepositorAssetsShares],
     });
     assert.ok(stEthDepositorAssets >= minimum);
   });
 
-  it("05 Unwrap wstETH: the depositor approves the zap's allowance contract, and the zap unwraps into the stETH vault", async () => {
+  it("05 Unwrap wstETH: the depositor approves the zap's allowance contract, and the zap unwraps into the stETH Plasma Vault", async () => {
     // Unlocks the Morpho Blue address so the story can send its wstETH from it without its key.
     await networkHelpers.impersonateAccount(WHALE);
     // Gives the whale ETH to pay gas for its wstETH transfer.
@@ -512,26 +512,26 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     const minimum = (expected * (WAD - SLIPPAGE)) / WAD;
     const [before, depositorBeforeShares] = await Promise.all([
       publicClient.readContract({
-        address: stEthVault,
-        abi: vaultAbi,
+        address: stEthPlasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssets",
       }),
       publicClient.readContract({
-        address: stEthVault,
+        address: stEthPlasmaVault,
         abi: erc20Abi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
     ]);
     const depositorBefore = await publicClient.readContract({
-      address: stEthVault,
-      abi: vaultAbi,
+      address: stEthPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToAssets",
       args: [depositorBeforeShares],
     });
     await depositor.writeContract({
       address: ZAP, abi: zapAbi, functionName: "zapIn",
-      args: [{ vault: stEthVault, receiver: DEPOSITOR, minAmountToDeposit: minimum, assetsToRefundToSender: [], calls: [
+      args: [{ vault: stEthPlasmaVault, receiver: DEPOSITOR, minAmountToDeposit: minimum, assetsToRefundToSender: [], calls: [
         {
           target: allowanceContract,
           data: encodeFunctionData({
@@ -548,7 +548,7 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
         },
         {
           target: STETH,
-          data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [stEthVault, maxUint256] }),
+          data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [stEthPlasmaVault, maxUint256] }),
           nativeTokenAmount: NO_NATIVE_TOKEN,
         },
       ] }],
@@ -556,12 +556,12 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
 
     const [stEthTotalAssets, stEthDepositorAssetsShares] = await Promise.all([
       publicClient.readContract({
-        address: stEthVault,
-        abi: vaultAbi,
+        address: stEthPlasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssets",
       }),
       publicClient.readContract({
-        address: stEthVault,
+        address: stEthPlasmaVault,
         abi: erc20Abi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
@@ -569,15 +569,15 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     ]);
     assert.ok(stEthTotalAssets - before >= minimum);
     const stEthDepositorAssets = await publicClient.readContract({
-      address: stEthVault,
-      abi: vaultAbi,
+      address: stEthPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToAssets",
       args: [stEthDepositorAssetsShares],
     });
     assert.ok(stEthDepositorAssets - depositorBefore >= minimum);
   });
 
-  it("06 Mint rUSD: the zap mints rUSD from USDC through Reservoir and deposits it into the rUSD vault", async () => {
+  it("06 Mint rUSD: the zap mints rUSD from USDC through Reservoir and deposits it into the rUSD Plasma Vault", async () => {
     const whale = await viem.getWalletClient(WHALE);
     const depositorUsdcBefore = await publicClient.readContract({
       address: USDC,
@@ -629,16 +629,16 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     // Expected output: amount * 1e18 rate / 10^6 USDC decimals, so rUSD in 18 decimals. The minimum is 0.5% below.
     const expected = (amount1000Usdc * WAD) / 10n ** BigInt(USDC_DECIMALS);
     const minimum = (expected * (WAD - SLIPPAGE)) / WAD;
-    const rUsdVaultTotalAssets = await publicClient.readContract({
-      address: rUsdVault,
-      abi: vaultAbi,
+    const rUsdPlasmaVaultTotalAssets = await publicClient.readContract({
+      address: rUsdPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "totalAssets",
     });
-    assert.equal(rUsdVaultTotalAssets, 0n);
+    assert.equal(rUsdPlasmaVaultTotalAssets, 0n);
     // The zap approves the PSM, pulls the USDC, and CreditEnforcer mints rUSD 1:1 through the PSM.
     await depositor.writeContract({
       address: ZAP, abi: zapAbi, functionName: "zapIn",
-      args: [{ vault: rUsdVault, receiver: DEPOSITOR, minAmountToDeposit: minimum, assetsToRefundToSender: [], calls: [
+      args: [{ vault: rUsdPlasmaVault, receiver: DEPOSITOR, minAmountToDeposit: minimum, assetsToRefundToSender: [], calls: [
         {
           target: USDC,
           data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [RESERVOIR_PSM, amount1000Usdc] }),
@@ -660,19 +660,19 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
         },
         {
           target: RUSD,
-          data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [rUsdVault, maxUint256] }),
+          data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [rUsdPlasmaVault, maxUint256] }),
           nativeTokenAmount: NO_NATIVE_TOKEN,
         },
       ] }],
     });
     const [rUsdTotalAssets, rUsdDepositorAssetsShares] = await Promise.all([
       publicClient.readContract({
-        address: rUsdVault,
-        abi: vaultAbi,
+        address: rUsdPlasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "totalAssets",
       }),
       publicClient.readContract({
-        address: rUsdVault,
+        address: rUsdPlasmaVault,
         abi: erc20Abi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
@@ -680,8 +680,8 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     ]);
     assert.ok(rUsdTotalAssets >= minimum);
     const rUsdDepositorAssets = await publicClient.readContract({
-      address: rUsdVault,
-      abi: vaultAbi,
+      address: rUsdPlasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToAssets",
       args: [rUsdDepositorAssetsShares],
     });

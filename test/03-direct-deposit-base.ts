@@ -1,6 +1,6 @@
-// S3 Direct deposit: read every value a deposit needs up front, then deposit into a public USDC vault
+// S3 Direct deposit: read every value a deposit needs up front, then deposit into a public USDC Plasma Vault
 // directly, with a referral code, and under a 1% deposit fee.
-// It stands alone: step 01 repeats S1's setup in short, without a market, so deposits stay idle in the vault.
+// It stands alone: step 01 repeats S1's setup in short, without a market, so deposits stay idle in the Plasma Vault.
 // Every step is a real transaction on a Base fork, and a step depends on the steps above it.
 // The story skips simulation on purpose, to show the transaction flow. A real app on a real
 // chain should simulate before each transaction, to check gas usage and whether it reverts.
@@ -19,13 +19,13 @@ import {
   zeroAddress,
   type Address,
 } from "viem";
-import { accessManagerAbi } from "../abis/accessManager.abi.ts";
+import { accessManagerAbi } from "../abis/access-manager.abi.ts";
 import { factoryAbi } from "../abis/factory.abi.ts";
-import { feeManagerAbi } from "../abis/feeManager.abi.ts";
-import { priceOracleAbi } from "../abis/priceOracle.abi.ts";
+import { feeManagerAbi } from "../abis/fee-manager.abi.ts";
+import { priceOracleAbi } from "../abis/price-oracle.abi.ts";
 import { referralAbi } from "../abis/referral.abi.ts";
-import { vaultAbi } from "../abis/vault.abi.ts";
-import { withdrawManagerAbi } from "../abis/withdrawManager.abi.ts";
+import { plasmaVaultAbi } from "../abis/plasma-vault.abi.ts";
+import { withdrawManagerAbi } from "../abis/withdraw-manager.abi.ts";
 
 // Base addresses, from ipor-abi: mainnet/mainnet-base-fusion/addresses.json at 8b1be92 (factory, ReferralPlasmaVault)
 // and README.md (USDC).
@@ -34,15 +34,15 @@ const REFERRAL_PLASMA_VAULT = "0xecd2bF892E2ee99Cf2CbBc81F6877132E25e34DB";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 // USDC has 6 decimals.
 const USDC_DECIMALS = 6;
-// Vault shares have the asset's decimals plus 2.
-const VAULT_SHARE_DECIMALS = 8;
-const VAULT_NAME = "Story USDC";
-const VAULT_SYMBOL = "sUSDC";
+// Plasma Vault shares have the asset's decimals plus 2.
+const PLASMA_VAULT_SHARE_DECIMALS = 8;
+const PLASMA_VAULT_NAME = "Story USDC";
+const PLASMA_VAULT_SYMBOL = "sUSDC";
 const REDEMPTION_DELAY = 0n;
 const DAO_FEE_PACKAGE_INDEX = 0n;
 // Morpho Blue on Base holds enough USDC at the fork block to fund the depositor.
 const USDC_WHALE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
-// The vault has no getter for its Withdraw Manager. WITHDRAW_MANAGER in PlasmaVaultStorageLib.sol (ipor-fusion 004d054)
+// The Plasma Vault has no getter for its Withdraw Manager. WITHDRAW_MANAGER in PlasmaVaultStorageLib.sol (ipor-fusion 004d054)
 // is the storage slot that holds it; the webapp reads the same slot (ipor-webapp src/fusion/withdraw-manager/hooks/use-withdraw-manager-address.ts at 350b2f75b).
 const WITHDRAW_MANAGER_SLOT = "0x465d2ff0062318fe6f4c7e9ac78cfcd70bc86a1d992722875ef83a9770513100";
 
@@ -64,8 +64,8 @@ const amount1000Usdc = parseUnits("1000", USDC_DECIMALS);
 const amount100Usdc = parseUnits("100", USDC_DECIMALS);
 const amount10Usdc = parseUnits("10", USDC_DECIMALS);
 const amount990Usdc = parseUnits("990", USDC_DECIMALS);
-const amount1000Shares = parseUnits("1000", VAULT_SHARE_DECIMALS);
-const amount100Shares = parseUnits("100", VAULT_SHARE_DECIMALS);
+const amount1000Shares = parseUnits("1000", PLASMA_VAULT_SHARE_DECIMALS);
+const amount100Shares = parseUnits("100", PLASMA_VAULT_SHARE_DECIMALS);
 
 const tolerance0_01Usdc = parseUnits("0.01", USDC_DECIMALS);
 // A client scales the oracle price to 18 decimals.
@@ -83,8 +83,8 @@ const owner = await viem.getWalletClient(OWNER);
 const atomist = await viem.getWalletClient(ATOMIST);
 const depositor = await viem.getWalletClient(DEPOSITOR);
 
-describe("S3 Direct deposit into a public USDC vault", () => {
-  let vault: Address, accessManager: Address, feeManager: Address, withdrawManager: Address;
+describe("S3 Direct deposit into a public USDC Plasma Vault", () => {
+  let plasmaVault: Address, accessManager: Address, feeManager: Address, withdrawManager: Address;
 
   before(async () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
@@ -100,14 +100,14 @@ describe("S3 Direct deposit into a public USDC vault", () => {
     });
   });
 
-  it("01 clones a vault, grants the Atomist and opens deposits to everyone, as in S1", async () => {
+  it("01 clones a Plasma Vault, grants the Atomist and opens deposits to everyone, as in S1", async () => {
     const hash = await owner.writeContract({
       address: FACTORY,
       abi: factoryAbi,
       functionName: "clone",
       args: [
-        VAULT_NAME,
-        VAULT_SYMBOL,
+        PLASMA_VAULT_NAME,
+        PLASMA_VAULT_SYMBOL,
         USDC,
         REDEMPTION_DELAY,
         OWNER,
@@ -117,14 +117,14 @@ describe("S3 Direct deposit into a public USDC vault", () => {
     const { logs } = await publicClient.waitForTransactionReceipt({ hash });
     const [created] = parseEventLogs({ abi: factoryAbi, logs, eventName: "FusionInstanceCreated" });
     assert.ok(created, "the receipt has no FusionInstanceCreated event");
-    vault = created.args.plasmaVault;
+    plasmaVault = created.args.plasmaVault;
     feeManager = created.args.feeManager;
     accessManager = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getAccessManagerAddress",
     });
-    const slot = await publicClient.getStorageAt({ address: vault, slot: WITHDRAW_MANAGER_SLOT });
+    const slot = await publicClient.getStorageAt({ address: plasmaVault, slot: WITHDRAW_MANAGER_SLOT });
     assert.ok(slot, "the Withdraw Manager slot is empty");
     // An address in a storage slot is its last 20 bytes.
     withdrawManager = slice(slot, 12);
@@ -139,7 +139,7 @@ describe("S3 Direct deposit into a public USDC vault", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(atomistHasRoleBefore, false);
@@ -152,8 +152,8 @@ describe("S3 Direct deposit into a public USDC vault", () => {
       args: [ATOMIST_ROLE, ATOMIST, NO_EXECUTION_DELAY],
     });
     await atomist.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToPublicVault",
     });
 
@@ -168,12 +168,12 @@ describe("S3 Direct deposit into a public USDC vault", () => {
         address: accessManager,
         abi: accessManagerAbi,
         functionName: "getTargetFunctionRole",
-        args: [vault, DEPOSIT_SELECTOR],
+        args: [plasmaVault, DEPOSIT_SELECTOR],
       }),
     ]);
     assert.equal(atomistHasRole, true);
     assert.equal(depositTargetFunctionRole, PUBLIC_ROLE);
-    assert.ok(!isAddressEqual(vault, zeroAddress));
+    assert.ok(!isAddressEqual(plasmaVault, zeroAddress));
     assert.ok(!isAddressEqual(withdrawManager, zeroAddress));
   });
 
@@ -188,10 +188,10 @@ describe("S3 Direct deposit into a public USDC vault", () => {
     });
     assert.equal(depositorBalanceUsdc, amount5000Usdc);
 
-    // USD value under the amount: the price comes from the vault's own oracle, scaled to 18 decimals as a client does.
+    // USD value under the amount: the price comes from the Plasma Vault's own oracle, scaled to 18 decimals as a client does.
     const priceOracleMiddleware = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "getPriceOracleMiddleware",
     });
     const [priceUsdc, priceUsdcDecimals] = await publicClient.readContract({
@@ -212,34 +212,34 @@ describe("S3 Direct deposit into a public USDC vault", () => {
       `1000 USDC is about 1000 USD, got ${usdValue18} / 1e18`,
     );
 
-    // Public: deposit is open to PUBLIC_ROLE. A private vault checks hasRole(800, account) instead (S4).
+    // Public: deposit is open to PUBLIC_ROLE. A private Plasma Vault checks hasRole(800, account) instead (S4).
     const depositRole = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "getTargetFunctionRole",
-      args: [vault, DEPOSIT_SELECTOR],
+      args: [plasmaVault, DEPOSIT_SELECTOR],
     });
     assert.equal(depositRole, PUBLIC_ROLE);
 
     // Paused: a closed target blocks deposits.
-    const vaultTargetClosed = await publicClient.readContract({
+    const plasmaVaultTargetClosed = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "isTargetClosed",
-      args: [vault],
+      args: [plasmaVault],
     });
-    assert.equal(vaultTargetClosed, false);
+    assert.equal(plasmaVaultTargetClosed, false);
 
-    // Limit: deposits are blocked when the amount exceeds maxDeposit. A factory vault has no cap.
+    // Limit: deposits are blocked when the amount exceeds maxDeposit. A factory Plasma Vault has no cap.
     const maxDeposit = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "maxDeposit",
       args: [DEPOSITOR],
     });
     assert.ok(maxDeposit >= amount1000Usdc, `maxDeposit ${maxDeposit}`);
 
-    // A factory vault starts with a one-day withdraw window.
+    // A factory Plasma Vault starts with a one-day withdraw window.
     const withdrawWindow = await publicClient.readContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
@@ -248,17 +248,17 @@ describe("S3 Direct deposit into a public USDC vault", () => {
     assert.equal(withdrawWindow, ONE_DAY_SECONDS);
   });
 
-  it("03 the depositor approves the vault and deposits 1000 USDC directly", async () => {
-    const [depositorAllowance, depositorSharesBefore, vaultUsdcBefore] = await Promise.all([
+  it("03 the depositor approves the Plasma Vault and deposits 1000 USDC directly", async () => {
+    const [depositorAllowance, depositorSharesBefore, plasmaVaultUsdcBefore] = await Promise.all([
       publicClient.readContract({
         address: USDC,
         abi: erc20Abi,
         functionName: "allowance",
-        args: [DEPOSITOR, vault],
+        args: [DEPOSITOR, plasmaVault],
       }),
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
@@ -266,43 +266,43 @@ describe("S3 Direct deposit into a public USDC vault", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.equal(depositorAllowance, 0n);
     assert.equal(depositorSharesBefore, 0n);
-    assert.equal(vaultUsdcBefore, 0n);
+    assert.equal(plasmaVaultUsdcBefore, 0n);
     await depositor.writeContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
-      args: [vault, amount1000Usdc],
+      args: [plasmaVault, amount1000Usdc],
     });
     const depositorAllowanceUsdc = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [DEPOSITOR, vault],
+      args: [DEPOSITOR, plasmaVault],
     });
     assert.equal(depositorAllowanceUsdc, amount1000Usdc);
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "deposit",
       args: [amount1000Usdc, DEPOSITOR],
     });
 
-    // Shares have the asset's decimals plus 2, so the first 1000 USDC in an empty vault mints 1000 * 10^8 shares.
+    // Shares have the asset's decimals plus 2, so the first 1000 USDC in an empty Plasma Vault mints 1000 * 10^8 shares.
     const decimals = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "decimals",
     });
     assert.equal(decimals, 8);
-    const [depositorShares, vaultUsdc] = await Promise.all([
+    const [depositorShares, plasmaVaultUsdc] = await Promise.all([
       publicClient.readContract({
-        address: vault,
-        abi: vaultAbi,
+        address: plasmaVault,
+        abi: plasmaVaultAbi,
         functionName: "balanceOf",
         args: [DEPOSITOR],
       }),
@@ -310,20 +310,20 @@ describe("S3 Direct deposit into a public USDC vault", () => {
         address: USDC,
         abi: erc20Abi,
         functionName: "balanceOf",
-        args: [vault],
+        args: [plasmaVault],
       }),
     ]);
     assert.equal(depositorShares, amount1000Shares);
-    assert.equal(vaultUsdc, amount1000Usdc);
+    assert.equal(plasmaVaultUsdc, amount1000Usdc);
   });
 
   it("04 the depositor deposits 100 USDC through ReferralPlasmaVault with a referral code", async () => {
-    // With a referral code a client approves the wrapper, not the vault, and deposits through it. The wrapper pulls the USDC,
+    // With a referral code a client approves the wrapper, not the Plasma Vault, and deposits through it. The wrapper pulls the USDC,
     // emits ReferralEvent with the caller as referrer, and deposits for the receiver.
     const referralCode = stringToHex("story-s3", { size: 32 });
     const sharesBefore = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [DEPOSITOR],
     });
@@ -351,7 +351,7 @@ describe("S3 Direct deposit into a public USDC vault", () => {
       address: REFERRAL_PLASMA_VAULT,
       abi: referralAbi,
       functionName: "deposit",
-      args: [vault, amount100Usdc, DEPOSITOR, referralCode],
+      args: [plasmaVault, amount100Usdc, DEPOSITOR, referralCode],
     });
     const { logs } = await publicClient.waitForTransactionReceipt({ hash });
 
@@ -361,8 +361,8 @@ describe("S3 Direct deposit into a public USDC vault", () => {
     assert.ok(event && isAddressEqual(event.args.referrer, DEPOSITOR), `referrer ${event?.args.referrer}`);
     assert.equal(event.args.referralCode, referralCode);
     const minted = (await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [DEPOSITOR],
     })) - sharesBefore;
@@ -405,8 +405,8 @@ describe("S3 Direct deposit into a public USDC vault", () => {
   it("06 computes \"Onboarding contribution\" and \"Net deposit\" for 1000 USDC, then deposits and matches the chain", async () => {
     // A client's chain of reads: the amount in shares, the fee in shares, then the fee back in assets.
     const shares = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToShares",
       args: [amount1000Usdc],
     });
@@ -417,8 +417,8 @@ describe("S3 Direct deposit into a public USDC vault", () => {
       args: [shares],
     });
     const contribution = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToAssets",
       args: [feeShares],
     });
@@ -430,8 +430,8 @@ describe("S3 Direct deposit into a public USDC vault", () => {
     );
 
     const sharesBefore = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [DEPOSITOR],
     });
@@ -439,37 +439,37 @@ describe("S3 Direct deposit into a public USDC vault", () => {
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [DEPOSITOR, vault],
+      args: [DEPOSITOR, plasmaVault],
     });
     assert.equal(depositorAllowanceUsdcBefore, 0n);
     await depositor.writeContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
-      args: [vault, amount1000Usdc],
+      args: [plasmaVault, amount1000Usdc],
     });
     const depositorAllowanceUsdcAfter = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
-      args: [DEPOSITOR, vault],
+      args: [DEPOSITOR, plasmaVault],
     });
     assert.equal(depositorAllowanceUsdcAfter, amount1000Usdc);
     await depositor.writeContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "deposit",
       args: [amount1000Usdc, DEPOSITOR],
     });
     const minted = (await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "balanceOf",
       args: [DEPOSITOR],
     })) - sharesBefore;
     const mintedAssets = await publicClient.readContract({
-      address: vault,
-      abi: vaultAbi,
+      address: plasmaVault,
+      abi: plasmaVaultAbi,
       functionName: "convertToAssets",
       args: [minted],
     });

@@ -1,7 +1,7 @@
 import { parseAbi } from "viem";
 
 // Source: ipor-abi, mainnet/mainnet-base-fusion/abis (PlasmaVaultBase at b942366, IporFusionPlasmaVaultCoreBase at 55b2d9e) for PlasmaVault and PlasmaVaultGovernance.
-export const vaultAbi = parseAbi([
+export const plasmaVaultAbi = parseAbi([
   "function asset() view returns (address)",
   "function getAccessManagerAddress() view returns (address)",
   "function addFuses(address[] fuses)",
