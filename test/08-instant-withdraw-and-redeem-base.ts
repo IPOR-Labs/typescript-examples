@@ -163,7 +163,9 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     // Without instant-withdrawal fuses, only idle USDC can pay, less what released requests reserve (S9).
     const balanceInAssets = await toAssets(await sharesOf(DEPOSITOR));
     const sharesToRelease = await publicClient.readContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "getSharesToRelease" });
-    const freeIdle = (await idle()) - (await toAssets(sharesToRelease));
+    // Assumes no withdraw fee; step 11 covers the fee.
+    const idleAfterReserve = (await idle()) - (await toAssets(sharesToRelease));
+    const freeIdle = idleAfterReserve > 0n ? idleAfterReserve : 0n;
     maxInstant = balanceInAssets < freeIdle ? balanceInAssets : freeIdle;
 
     assert.ok(balanceInAssets >= usdc("1000") - 1n, `balance in assets: ${balanceInAssets}`);
@@ -223,7 +225,8 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     await withdraw(usdc("200"));
 
     assert.equal((await usdcOf(DEPOSITOR)) - usdcBefore, usdc("200"));
-    assert.ok((await inAave()) <= aaveBefore - usdc("200"), `Aave V3: ${aaveBefore} -> ${await inAave()}`);
+    const aaveAfter = await inAave();
+    assert.ok(aaveAfter <= aaveBefore - usdc("200"), `Aave V3: ${aaveBefore} -> ${aaveAfter}`);
   });
 
   it("10 the Atomist grants role 902 and sets a 1% withdraw fee", async () => {

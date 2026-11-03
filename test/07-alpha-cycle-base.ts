@@ -155,7 +155,8 @@ describe("S7 Alpha cycle on Aave V3", () => {
 
     assert.equal(await idle(), idleBefore - usdc("300"));
     // Aave rounds the aToken balance down by at most a unit or two.
-    assert.ok((await inAave()) >= usdc("300") - 2n, `in Aave: ${await inAave()}`);
+    const inAaveNow = await inAave();
+    assert.ok(inAaveNow >= usdc("300") - 2n, `in Aave: ${inAaveNow}`);
   });
 
   it("06 the Atomist grants a balance updater, then 30 days later the stored market balance is stale", async () => {
@@ -176,8 +177,10 @@ describe("S7 Alpha cycle on Aave V3", () => {
   it("07 the balance updater refreshes the Aave V3 market and total assets grow", async () => {
     await publicClient.waitForTransactionReceipt({ hash: await balanceUpdater.writeContract({ address: vault, abi: vaultAbi, functionName: "updateMarketsBalances", args: [[AAVE_V3_MARKET]] }) });
 
-    assert.ok((await totalAssets()) > totalAssetsBefore, `30 days of Aave V3 interest: ${totalAssetsBefore} -> ${await totalAssets()}`);
-    assert.ok((await inAave()) > storedBefore, `in Aave: ${await inAave()}`);
+    const totalAssetsAfter = await totalAssets();
+    const inAaveAfter = await inAave();
+    assert.ok(totalAssetsAfter > totalAssetsBefore, `30 days of Aave V3 interest: ${totalAssetsBefore} -> ${totalAssetsAfter}`);
+    assert.ok(inAaveAfter > storedBefore, `in Aave: ${inAaveAfter}`);
   });
 
   it("08 the Alpha exits everything with the maximum amount", async () => {
@@ -186,7 +189,8 @@ describe("S7 Alpha cycle on Aave V3", () => {
     // beyond what the vault supplies, so a withdraw above supply + ~2 USDC fails, and the fuse swallows that failure (AaveV3SupplyFuseExitFailed).
     await publicClient.waitForTransactionReceipt({ hash: await alpha.writeContract({ address: vault, abi: vaultAbi, functionName: "execute", args: [[exitAction(maxUint256)]] }) });
 
-    assert.ok((await idle()) > usdc("1000"), `idle: ${await idle()}`);
+    const idleAfter = await idle();
+    assert.ok(idleAfter > usdc("1000"), `idle: ${idleAfter}`);
     assert.equal(await inAave(), 0n);
   });
 });

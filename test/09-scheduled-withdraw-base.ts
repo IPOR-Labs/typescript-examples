@@ -110,13 +110,15 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     const data = encodeFunctionData({ abi: aaveV3SupplyFuseAbi, functionName: "exit", args: [{ asset: USDC, amount }] });
     await publicClient.waitForTransactionReceipt({ hash: await alpha.writeContract({ address: vault, abi: vaultAbi, functionName: "execute", args: [[{ fuse: AAVE_V3_SUPPLY_FUSE, data }]] }) });
   };
-  // The Alpha releases shares for every request made before the timestamp, which must be in the past.
-  // The UI passes the request's own timestamp plus 1 s, so it waits 1 s first.
+  // releaseFunds overwrites the released total, it does not add to it. The value passed is the new total released,
+  // including shares released earlier and not yet redeemed, so this helper adds the new shares to getSharesToRelease.
+  // The timestamp must be in the past. The UI passes the request's own timestamp plus 1 s, so it waits 1 s first.
   const release = async (account: Address, shares: bigint) => {
     const { endWithdrawWindowTimestamp, withdrawWindowInSeconds } = await requestOf(account);
     const requestTimestamp = endWithdrawWindowTimestamp - withdrawWindowInSeconds;
+    const total = (await sharesToRelease()) + shares;
     await networkHelpers.time.increase(1);
-    await publicClient.waitForTransactionReceipt({ hash: await alpha.writeContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "releaseFunds", args: [requestTimestamp + 1n, shares] }) });
+    await publicClient.waitForTransactionReceipt({ hash: await alpha.writeContract({ address: withdrawManager, abi: withdrawManagerAbi, functionName: "releaseFunds", args: [requestTimestamp + 1n, total] }) });
   };
 
   before(async () => {
@@ -247,7 +249,8 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     // "Available to redeem": the shares the release covers, capped by the request and B's balance.
     const balance = await sharesOf(DEPOSITOR_B);
     const released = await sharesToRelease();
-    const coverable = [requested, balance, released].reduce((a, b) => (a < b ? a : b));
+    const lowerOfRequestedAndReleased = requested < released ? requested : released;
+    const coverable = balance < lowerOfRequestedAndReleased ? balance : lowerOfRequestedAndReleased;
     assert.ok(coverable > 0n && coverable < requested, `coverable ${coverable} of ${requested}`);
 
     const usdcBefore = await usdcOf(DEPOSITOR_B);
@@ -281,6 +284,8 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
   it("11 after the window ends, the request has expired and redeeming from it reverts", async () => {
     const { shares, endWithdrawWindowTimestamp } = await requestOf(DEPOSITOR_B);
     // Released, so the only thing that stops B below is the window.
+    // This release is unbacked on purpose: the vault holds only a few USDC idle, and it is released only so the later
+    // revert proves expiry. A real Alpha exits from Aave first, as steps 07 and 09 do.
     await release(DEPOSITOR_B, shares);
     assert.equal((await requestOf(DEPOSITOR_B)).canWithdraw, true);
 
