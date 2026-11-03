@@ -1,37 +1,29 @@
 # IPOR Fusion TypeScript Examples
 
-This repository contains code examples written in TypeScript for interacting with **IPOR Fusion**, with a focus on accessing and utilizing **Plasma Vaults**.
+Runnable [IPOR Fusion](https://ipor.io/) Plasma Vault stories in TypeScript and viem, executed on a Hardhat fork. Protocol docs for integrators and agents: https://ipor.io/llms.txt
 
-## What is IPOR Fusion?
+## Setup
 
-**IPOR Fusion** is a decentralized finance (DeFi) yield optimization framework developed by [IPOR Labs](https://ipor.io/). It acts as a meta-aggregation, execution, and intelligence engine, designed to streamline on-chain asset management. Fusion enables users and protocols to optimize yield strategies across multiple DeFi platforms, providing efficient, automated, and intelligent asset allocation.
+1. Node 22 and pnpm.
+2. `pnpm install`
+3. Copy `.env.example` to `.env` and set `RPC_URL_BASE` to an archive-capable Base RPC. The fork is pinned to a past block, so a non-archive RPC fails.
 
-## About This Repository
+## Run
 
-- **Language:** TypeScript
-- **Focus:** Accessing Plasma Vaults via IPOR Fusion
-- **Purpose:** Educational and practical code examples for developers and integrators
+- All stories: `pnpm test`
+- One story: `pnpm hardhat test nodejs <file>`
+- Types: `pnpm typecheck`
 
-## Structure
+## Stories
 
-- `abi/` – ABIs for smart contracts used in the examples
-- `examples/` – TypeScript code examples demonstrating how to interact with IPOR Fusion and Plasma Vaults
-- `lib/` – Utility libraries and helpers
+| Story | File | What it shows |
+| --- | --- | --- |
+| S1 | `test/01-create-and-configure-base.ts` | Create and configure a vault on Base |
+| S2 | `test/02-read-a-vault-base.ts` | Read a vault's state on Base |
 
-## Getting Started
+## How to read a story
 
-1. **Install dependencies:**
-   ```sh
-   pnpm install
-   ```
-2. **Set up environment variables:**
-   - Copy `.env.example` to `.env` and fill in the required values.
-3. **Run tests:**
-   ```sh
-   pnpm test
-   ```
-
-## Resources
-
-- [IPOR Labs Website](https://ipor.io/)
-- [IPOR Fusion Documentation](https://docs.ipor.io/developers-docs/fusion/)
+- Stories do not simulate transactions. A real app should simulate before each transaction.
+- Read only the first failure. Later steps depend on earlier ones, so they cascade.
+- Zaps do not work for private vaults.
+- ABIs and addresses come from the `ipor-abi` repository on `main`.

@@ -1,24 +1,25 @@
 {
   "name": "typescript-examples",
   "version": "1.0.0",
-  "description": "",
+  "description": "Runnable IPOR Fusion Plasma Vault stories in TypeScript and viem: create, configure, deposit, withdraw and operate a vault on a Hardhat fork.",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.2",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "test": "vitest"
+    "test": "hardhat test",
+    "typecheck": "tsc --noEmit"
   },
-  "keywords": [],
-  "author": "",
   "license": "ISC",
-  "dependencies": {
-    "viem": "2.30.0",
-    "zod": "3.25.7"
-  },
   "devDependencies": {
-    "@types/node": "22.15.19",
-    "dotenv": "16.5.0",
-    "prool": "0.0.24",
-    "vite-plugin-checker": "0.9.3",
-    "vite-plugin-dynamic-import": "1.6.0",
-    "vite-tsconfig-paths": "5.1.4",
-    "vitest": "3.1.4"
+    "@nomicfoundation/hardhat-network-helpers": "3.0.12",
+    "@nomicfoundation/hardhat-node-test-runner": "3.1.2",
+    "@nomicfoundation/hardhat-viem": "3.1.0",
+    "@types/node": "22.20.5",
+    "hardhat": "3.21.2",
+    "typescript": "7.0.2",
+    "viem": "2.57.14"
   }
 }
