@@ -75,6 +75,12 @@ const amount1000Usdc = parseUnits("1000", USDC_DECIMALS);
 const amount800Usdc = parseUnits("800", USDC_DECIMALS);
 const amount200Usdc = parseUnits("200", USDC_DECIMALS);
 
+const GAS_TOP_UP = parseEther("1");
+// The vault prices its asset at about 1 USD, within 2%.
+const PRICE_LOWER_PERCENT = 98n;
+const PRICE_UPPER_PERCENT = 102n;
+const THIRTY_DAYS = 30 * 24 * 60 * 60;
+
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
 const owner = await viem.getWalletClient(OWNER);
@@ -97,7 +103,7 @@ describe("S2 Read a USDC vault on Aave V3", () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
     await networkHelpers.impersonateAccount(USDC_WHALE);
     // Gives the whale ETH to pay gas for its USDC transfer.
-    await networkHelpers.setBalance(USDC_WHALE, parseEther("1"));
+    await networkHelpers.setBalance(USDC_WHALE, GAS_TOP_UP);
     const whale = await viem.getWalletClient(USDC_WHALE);
     await whale.writeContract({
       address: USDC,
@@ -409,12 +415,13 @@ describe("S2 Read a USDC vault on Aave V3", () => {
       functionName: "approve",
       args: [vault, amount1000Usdc],
     });
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdc = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, vault],
-    }), amount1000Usdc);
+    });
+    assert.equal(depositorAllowanceUsdc, amount1000Usdc);
     await depositor.writeContract({
       address: vault,
       abi: vaultAbi,
@@ -538,16 +545,16 @@ describe("S2 Read a USDC vault on Aave V3", () => {
       args: [asset],
     });
 
-    const one = 10n ** priceDecimals;
+    const oneUsdInPriceUnits = 10n ** priceDecimals;
     assert.ok(
-      assetPrice > (one * 98n) / 100n && assetPrice < (one * 102n) / 100n,
+      assetPrice > (oneUsdInPriceUnits * PRICE_LOWER_PERCENT) / 100n && assetPrice < (oneUsdInPriceUnits * PRICE_UPPER_PERCENT) / 100n,
       `The asset is about 1 USD, got ${assetPrice} / 10^${priceDecimals}`,
     );
   });
 
   it("09 refreshes market balances with role 1000, then reads total assets", async () => {
     // updateMarketsBalances is restricted to UPDATE_MARKETS_BALANCES_ROLE (see PlasmaVault.updateMarketsBalances).
-    await networkHelpers.time.increase(30 * 24 * 60 * 60);
+    await networkHelpers.time.increase(THIRTY_DAYS);
     const totalAssetsBefore = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
@@ -603,7 +610,7 @@ describe("S2 Read a USDC vault on Aave V3", () => {
     const tvl = (totalAssets * assetPrice) / 10n ** priceDecimals;
 
     assert.ok(
-      tvl > (totalAssets * 98n) / 100n && tvl < (totalAssets * 102n) / 100n,
+      tvl > (totalAssets * PRICE_LOWER_PERCENT) / 100n && tvl < (totalAssets * PRICE_UPPER_PERCENT) / 100n,
       `TVL ${tvl} for ${totalAssets} (${assetDecimals} decimals)`,
     );
   });

@@ -2,7 +2,7 @@
 // deployed zap contract ERC4626ZapInWithNativeToken. The zap runs the calls it is given (wrap, stake,
 // unwrap, mint) and deposits the resulting vault asset in the same transaction.
 // The vaults are set up as in S1, without a market: the zapped assets stay idle in the vault.
-// The values shared by every deposit method (balance, Max, public, paused, maxDeposit, withdraw note)
+// The values shared by every deposit method (balance, public, paused, maxDeposit, withdraw note)
 // are read as in S3. This story adds the values specific to a zap: the expected output, the slippage minimum
 // passed as minAmountToDeposit, the approval spender and the native token's USD price.
 // Every step is a real transaction on an Ethereum fork, and a step depends on the steps above it.
@@ -84,6 +84,10 @@ const amount1WstEth = parseEther("1");
 const amount1000Usdc = parseUnits("1000", USDC_DECIMALS);
 
 const NO_NATIVE_TOKEN = 0n;
+
+const GAS_TOP_UP = parseEther("1");
+const ETH_USD_LOWER_BOUND = parseEther("500");
+const ETH_USD_UPPER_BOUND = parseEther("20000");
 
 const { viem, networkHelpers } = await network.create("ethereum");
 const publicClient = await viem.getPublicClient();
@@ -340,9 +344,9 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     assert.ok(answer > 0n, "the ETH/USD answer is not positive");
     // A client scales the 8-decimal answer to 18 decimals, then prices the amount: 1 ETH in USD, 18 decimals.
     const ethUsd18 = answer * 10n ** (WAD_DECIMALS - BigInt(decimals));
-    const oneEthUsd = (parseEther("1") * ethUsd18) / WAD;
+    const oneEthUsd = (amount1Eth * ethUsd18) / WAD;
     assert.ok(
-      oneEthUsd > parseEther("500") && oneEthUsd < parseEther("20000"),
+      oneEthUsd > ETH_USD_LOWER_BOUND && oneEthUsd < ETH_USD_UPPER_BOUND,
       `1 ETH is between 500 and 20000 USD, got ${oneEthUsd} / 1e18`,
     );
   });
@@ -353,11 +357,12 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     const minimum = expected;
     // ETH is sent as the transaction value, so there is no approval. The zap deposits its whole WETH balance,
     // which must reach minAmountToDeposit.
-    assert.equal(await publicClient.readContract({
+    const wethVaultTotalAssets = await publicClient.readContract({
       address: wethVault,
       abi: vaultAbi,
       functionName: "totalAssets",
-    }), 0n);
+    });
+    assert.equal(wethVaultTotalAssets, 0n);
     await depositor.writeContract({
       address: ZAP, abi: zapAbi, functionName: "zapIn", value: amount1Eth,
       args: [{ vault: wethVault, receiver: DEPOSITOR, minAmountToDeposit: minimum, assetsToRefundToSender: [], calls: [
@@ -400,11 +405,12 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     // Lido mints stETH 1:1 for ETH, but stETH balances round down by 1 to 2 wei: the minimum is 0.5% below.
     const expected = amount1Eth;
     const minimum = (expected * (WAD - SLIPPAGE)) / WAD;
-    assert.equal(await publicClient.readContract({
+    const stEthVaultTotalAssets = await publicClient.readContract({
       address: stEthVault,
       abi: vaultAbi,
       functionName: "totalAssets",
-    }), 0n);
+    });
+    assert.equal(stEthVaultTotalAssets, 0n);
     await depositor.writeContract({
       address: ZAP, abi: zapAbi, functionName: "zapIn", value: amount1Eth,
       args: [{ vault: stEthVault, receiver: DEPOSITOR, minAmountToDeposit: minimum, assetsToRefundToSender: [], calls: [
@@ -447,7 +453,7 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
     // Unlocks the Morpho Blue address so the story can send its wstETH from it without its key.
     await networkHelpers.impersonateAccount(WHALE);
     // Gives the whale ETH to pay gas for its wstETH transfer.
-    await networkHelpers.setBalance(WHALE, parseEther("1"));
+    await networkHelpers.setBalance(WHALE, GAS_TOP_UP);
     const whale = await viem.getWalletClient(WHALE);
     const depositorWstEthBefore = await publicClient.readContract({
       address: WSTETH,
@@ -475,24 +481,26 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
       abi: zapAbi,
       functionName: "ZAP_IN_ALLOWANCE_CONTRACT",
     });
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceWstEthBefore = await publicClient.readContract({
       address: WSTETH,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, allowanceContract],
-    }), 0n);
+    });
+    assert.equal(depositorAllowanceWstEthBefore, 0n);
     await depositor.writeContract({
       address: WSTETH,
       abi: erc20Abi,
       functionName: "approve",
       args: [allowanceContract, amount1WstEth],
     });
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceWstEthAfter = await publicClient.readContract({
       address: WSTETH,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, allowanceContract],
-    }), amount1WstEth);
+    });
+    assert.equal(depositorAllowanceWstEthAfter, amount1WstEth);
 
     // Expected output: amount * rate / 10^18, with the rate from stEthPerToken(). The minimum is 0.5% below.
     const rate = await publicClient.readContract({
@@ -597,33 +605,36 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
       }),
     ]);
     assert.equal(depositorUsdc - depositorUsdcBefore, amount1000Usdc);
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdcBefore = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, allowanceContract],
-    }), 0n);
+    });
+    assert.equal(depositorAllowanceUsdcBefore, 0n);
     await depositor.writeContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
       args: [allowanceContract, amount1000Usdc],
     });
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdcAfter = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, allowanceContract],
-    }), amount1000Usdc);
+    });
+    assert.equal(depositorAllowanceUsdcAfter, amount1000Usdc);
 
     // Expected output: amount * 1e18 rate / 10^6 USDC decimals, so rUSD in 18 decimals. The minimum is 0.5% below.
     const expected = (amount1000Usdc * WAD) / 10n ** BigInt(USDC_DECIMALS);
     const minimum = (expected * (WAD - SLIPPAGE)) / WAD;
-    assert.equal(await publicClient.readContract({
+    const rUsdVaultTotalAssets = await publicClient.readContract({
       address: rUsdVault,
       abi: vaultAbi,
       functionName: "totalAssets",
-    }), 0n);
+    });
+    assert.equal(rUsdVaultTotalAssets, 0n);
     // The zap approves the PSM, pulls the USDC, and CreditEnforcer mints rUSD 1:1 through the PSM.
     await depositor.writeContract({
       address: ZAP, abi: zapAbi, functionName: "zapIn",

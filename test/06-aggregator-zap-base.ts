@@ -73,6 +73,9 @@ const NO_ALLOWANCE = 0n;
 
 const NO_NATIVE_TOKEN = 0n;
 
+// Matches the fixture amountIn.
+const WRAP_AMOUNT = parseEther("0.1");
+
 const { viem } = await network.create("base-kyberswap");
 const publicClient = await viem.getPublicClient();
 const owner = await viem.getWalletClient(OWNER);
@@ -152,7 +155,7 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Base", () => {
   });
 
   it("02 the depositor wraps 0.1 ETH into WETH, the token the zap spends", async () => {
-    const before = await publicClient.readContract({
+    const wethBalanceBefore = await publicClient.readContract({
       address: WETH,
       abi: erc20Abi,
       functionName: "balanceOf",
@@ -162,7 +165,7 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Base", () => {
       address: WETH,
       abi: wethAbi,
       functionName: "deposit",
-      value: parseEther("0.1"),
+      value: WRAP_AMOUNT,
     });
 
     const wethBalance = await publicClient.readContract({
@@ -171,7 +174,7 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Base", () => {
       functionName: "balanceOf",
       args: [DEPOSITOR],
     });
-    assert.equal(wethBalance - before, BigInt(kyberswap.amountIn));
+    assert.equal(wethBalance - wethBalanceBefore, BigInt(kyberswap.amountIn));
   });
 
   it("03 zaps 0.1 WETH into the vault through the recorded KyberSwap route", async () => {
@@ -185,24 +188,26 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Base", () => {
       abi: zapAbi,
       functionName: "ZAP_IN_ALLOWANCE_CONTRACT",
     });
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceWethBefore = await publicClient.readContract({
       address: WETH,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, allowanceContract],
-    }), 0n);
+    });
+    assert.equal(depositorAllowanceWethBefore, 0n);
     await depositor.writeContract({
       address: WETH,
       abi: erc20Abi,
       functionName: "approve",
       args: [allowanceContract, kyberswapAmountInWeth],
     });
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceWethAfter = await publicClient.readContract({
       address: WETH,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, allowanceContract],
-    }), kyberswapAmountInWeth);
+    });
+    assert.equal(depositorAllowanceWethAfter, kyberswapAmountInWeth);
 
     const [wethBefore, usdcBefore, sharesBefore] = await Promise.all([
       publicClient.readContract({
@@ -296,6 +301,6 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Base", () => {
       `${kyberswap.aggregator}: vault received ${youReceive} USDC units, minimum ${minAmountToDeposit}`,
     );
     assert.ok(shares > 0n, `${kyberswap.aggregator}: no shares minted`);
-    await previewValues({ publicClient, vault, weth: WETH, usdc: USDC, youDeposit, youReceive });
+    await previewValues({ publicClient, vault, wethAddress: WETH, usdcAddress: USDC, youDeposit, youReceive });
   });
 });

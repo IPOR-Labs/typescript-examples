@@ -71,6 +71,12 @@ const tolerance0_01Usdc = parseUnits("0.01", USDC_DECIMALS);
 // A client scales the oracle price to 18 decimals.
 const PRICE_SCALE_DECIMALS = 18n;
 
+const GAS_TOP_UP = parseEther("1");
+const feeOnePercent = parseEther("0.01");
+const ONE_DAY_SECONDS = 86400n;
+const USD_LOWER_BOUND = parseEther("980");
+const USD_UPPER_BOUND = parseEther("1020");
+
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
 const owner = await viem.getWalletClient(OWNER);
@@ -84,7 +90,7 @@ describe("S3 Direct deposit into a public USDC vault", () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
     await networkHelpers.impersonateAccount(USDC_WHALE);
     // Gives the whale ETH to pay gas for its USDC transfer.
-    await networkHelpers.setBalance(USDC_WHALE, parseEther("1"));
+    await networkHelpers.setBalance(USDC_WHALE, GAS_TOP_UP);
     const whale = await viem.getWalletClient(USDC_WHALE);
     await whale.writeContract({
       address: USDC,
@@ -173,7 +179,7 @@ describe("S3 Direct deposit into a public USDC vault", () => {
 
   it("02 reads the values every deposit shows up front, for an amount of 1000 USDC", async () => {
 
-    // Balance label. Max is the balance for an ERC-20 (Max of a native balance keeps 5% back for gas: NATIVE_ETH_MAX_FILL_PERCENT = 95n in https://github.com/IPOR-Labs/ipor-webapp/blob/220fe2a0a794f4194f6b5895febeb65e95839bb0/src/fusion/deposit/deposit-token-amount/deposit-token-amount.types.tsx#L14).
+    // The depositor's full balance for an ERC-20. For a native balance the read keeps 5% back for gas: NATIVE_ETH_MAX_FILL_PERCENT = 95n in https://github.com/IPOR-Labs/ipor-webapp/blob/220fe2a0a794f4194f6b5895febeb65e95839bb0/src/fusion/deposit/deposit-token-amount/deposit-token-amount.types.tsx#L14.
     const depositorBalanceUsdc = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
@@ -202,7 +208,7 @@ describe("S3 Direct deposit into a public USDC vault", () => {
     });
     const usdValue18 = (amount1000Usdc * price18) / 10n ** BigInt(assetDecimals);
     assert.ok(
-      usdValue18 > parseEther("980") && usdValue18 < parseEther("1020"),
+      usdValue18 > USD_LOWER_BOUND && usdValue18 < USD_UPPER_BOUND,
       `1000 USDC is about 1000 USD, got ${usdValue18} / 1e18`,
     );
 
@@ -216,12 +222,13 @@ describe("S3 Direct deposit into a public USDC vault", () => {
     assert.equal(depositRole, PUBLIC_ROLE);
 
     // Paused: a closed target blocks deposits.
-    assert.equal(await publicClient.readContract({
+    const vaultTargetClosed = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "isTargetClosed",
       args: [vault],
-    }), false);
+    });
+    assert.equal(vaultTargetClosed, false);
 
     // Limit: deposits are blocked when the amount exceeds maxDeposit. A factory vault has no cap.
     const maxDeposit = await publicClient.readContract({
@@ -238,7 +245,7 @@ describe("S3 Direct deposit into a public USDC vault", () => {
       abi: withdrawManagerAbi,
       functionName: "getWithdrawWindow",
     });
-    assert.equal(withdrawWindow, 86400n);
+    assert.equal(withdrawWindow, ONE_DAY_SECONDS);
   });
 
   it("03 the depositor approves the vault and deposits 1000 USDC directly", async () => {
@@ -271,12 +278,13 @@ describe("S3 Direct deposit into a public USDC vault", () => {
       functionName: "approve",
       args: [vault, amount1000Usdc],
     });
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdc = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, vault],
-    }), amount1000Usdc);
+    });
+    assert.equal(depositorAllowanceUsdc, amount1000Usdc);
     await depositor.writeContract({
       address: vault,
       abi: vaultAbi,
@@ -319,24 +327,26 @@ describe("S3 Direct deposit into a public USDC vault", () => {
       functionName: "balanceOf",
       args: [DEPOSITOR],
     });
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdcBefore = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, REFERRAL_PLASMA_VAULT],
-    }), 0n);
+    });
+    assert.equal(depositorAllowanceUsdcBefore, 0n);
     await depositor.writeContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
       args: [REFERRAL_PLASMA_VAULT, amount100Usdc],
     });
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdcAfter = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, REFERRAL_PLASMA_VAULT],
-    }), amount100Usdc);
+    });
+    assert.equal(depositorAllowanceUsdcAfter, amount100Usdc);
     const hash = await depositor.writeContract({
       address: REFERRAL_PLASMA_VAULT,
       abi: referralAbi,
@@ -361,12 +371,13 @@ describe("S3 Direct deposit into a public USDC vault", () => {
 
   it("05 the Atomist sets a 1% deposit fee on the fee manager", async () => {
     // Fees have 18 decimals: 1e16 is 1%. setDepositFee is restricted to ATOMIST_ROLE.
-    const fee = parseEther("0.01");
-    assert.equal(await publicClient.readContract({
+    const fee = feeOnePercent;
+    const depositFeeBefore = await publicClient.readContract({
       address: feeManager,
       abi: feeManagerAbi,
       functionName: "getDepositFee",
-    }), 0n);
+    });
+    assert.equal(depositFeeBefore, 0n);
     await assert.rejects(
       // Expected to revert: the depositor holds no Atomist role.
       depositor.writeContract({
@@ -384,11 +395,12 @@ describe("S3 Direct deposit into a public USDC vault", () => {
       args: [fee],
     });
 
-    assert.equal(await publicClient.readContract({
+    const depositFeeAfter = await publicClient.readContract({
       address: feeManager,
       abi: feeManagerAbi,
       functionName: "getDepositFee",
-    }), fee);
+    });
+    assert.equal(depositFeeAfter, fee);
   });
 
   it("06 computes \"Onboarding contribution\" and \"Net deposit\" for 1000 USDC, then deposits and matches the chain", async () => {
@@ -424,24 +436,26 @@ describe("S3 Direct deposit into a public USDC vault", () => {
       functionName: "balanceOf",
       args: [DEPOSITOR],
     });
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdcBefore = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, vault],
-    }), 0n);
+    });
+    assert.equal(depositorAllowanceUsdcBefore, 0n);
     await depositor.writeContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
       args: [vault, amount1000Usdc],
     });
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdcAfter = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, vault],
-    }), amount1000Usdc);
+    });
+    assert.equal(depositorAllowanceUsdcAfter, amount1000Usdc);
     await depositor.writeContract({
       address: vault,
       abi: vaultAbi,

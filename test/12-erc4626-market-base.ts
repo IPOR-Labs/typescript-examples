@@ -65,6 +65,9 @@ const amount10000Usdc = parseUnits("10000", USDC_DECIMALS);
 const amount8000Usdc = parseUnits("8000", USDC_DECIMALS);
 const amount2000Usdc = parseUnits("2000", USDC_DECIMALS);
 
+const GAS_TOP_UP = parseEther("1");
+const ONE_DAY = 24 * 60 * 60;
+
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
 const owner = await viem.getWalletClient(OWNER);
@@ -80,7 +83,7 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
     await networkHelpers.impersonateAccount(USDC_WHALE);
     // Gives the whale ETH to pay gas.
-    await networkHelpers.setBalance(USDC_WHALE, parseEther("1"));
+    await networkHelpers.setBalance(USDC_WHALE, GAS_TOP_UP);
   });
 
   it("01 clones a vault and grants its roles, as in S1", async () => {
@@ -197,12 +200,13 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
   it("02 the whale deposits 10000 USDC", async () => {
     // S3 explains the deposit.
     const whale = await viem.getWalletClient(USDC_WHALE);
-    assert.equal(await publicClient.readContract({
+    const usdcWhaleAllowanceUsdcBefore = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [USDC_WHALE, vault],
-    }), 0n);
+    });
+    assert.equal(usdcWhaleAllowanceUsdcBefore, 0n);
     const idleBefore = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
@@ -210,24 +214,26 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
       args: [vault],
     });
     assert.equal(idleBefore, 0n);
-    assert.equal(await publicClient.readContract({
+    const usdcWhaleSharesBalance = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "balanceOf",
       args: [USDC_WHALE],
-    }), 0n);
+    });
+    assert.equal(usdcWhaleSharesBalance, 0n);
     await whale.writeContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
       args: [vault, amount10000Usdc],
     });
-    assert.equal(await publicClient.readContract({
+    const usdcWhaleAllowanceUsdcAfter = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [USDC_WHALE, vault],
-    }), amount10000Usdc);
+    });
+    assert.equal(usdcWhaleAllowanceUsdcAfter, amount10000Usdc);
     await whale.writeContract({
       address: vault,
       abi: vaultAbi,
@@ -284,12 +290,13 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
     });
     // The substrate is the target vault's address, left-padded to 32 bytes. grantMarketSubstrates replaces the market's whole list.
     const substrate = pad(STEAKHOUSE_USDC, { size: 32 });
-    assert.equal(await publicClient.readContract({
+    const substrateGranted = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "isMarketSubstrateGranted",
       args: [ERC4626_0001_MARKET, substrate],
-    }), false);
+    });
+    assert.equal(substrateGranted, false);
     await fuseManager.writeContract({
       address: vault,
       abi: vaultAbi,
@@ -400,7 +407,7 @@ describe("S12 ERC-4626 market on a MetaMorpho USDC vault", () => {
       args: [UPDATE_MARKETS_BALANCES_ROLE, BALANCE_UPDATER],
     });
     assert.equal(updaterHasRole, true);
-    await networkHelpers.time.increase(24 * 60 * 60);
+    await networkHelpers.time.increase(ONE_DAY);
     const totalAssetsBefore = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,

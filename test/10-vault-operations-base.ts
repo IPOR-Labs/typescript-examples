@@ -58,6 +58,11 @@ const amount50Shares = parseUnits("50", VAULT_SHARE_DECIMALS);
 
 const amount10Shares = parseUnits("10", VAULT_SHARE_DECIMALS);
 
+const GAS_TOP_UP = parseEther("1");
+// Totals add the DAO fee package to the recipient's fee.
+const TOTAL_MANAGEMENT_FEE_BPS = 205n;
+const TOTAL_PERFORMANCE_FEE_BPS = 2000n;
+
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
 const owner = await viem.getWalletClient(OWNER);
@@ -72,7 +77,7 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
     await networkHelpers.impersonateAccount(USDC_WHALE);
     // Gives the whale ETH to pay gas for its USDC transfer.
-    await networkHelpers.setBalance(USDC_WHALE, parseEther("1"));
+    await networkHelpers.setBalance(USDC_WHALE, GAS_TOP_UP);
     const whale = await viem.getWalletClient(USDC_WHALE);
     await whale.writeContract({
       address: USDC,
@@ -188,24 +193,25 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
     assert.equal(atomistHasRole, true);
     assert.equal(depositRole, PUBLIC_ROLE);
     // The deposit spent 1000 of the 2000 USDC approved.
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdc = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, vault],
-    }), amount1000Usdc);
+    });
+    assert.equal(depositorAllowanceUsdc, amount1000Usdc);
   });
 
   it("02 reads the DAO fee package the vault was cloned with", async () => {
     // Fees are in basis points: 10000 = 100%. The DAO takes its share before any fee the Atomist sets.
-    const [package0] = await publicClient.readContract({
+    const [daoFeePackage] = await publicClient.readContract({
       address: FACTORY,
       abi: factoryFeeAbi,
       functionName: "getDaoFeePackages",
     });
-    assert.ok(package0, "the factory has no DAO fee package");
-    assert.equal(package0.managementFee, 5n);
-    assert.equal(package0.performanceFee, 1000n);
+    assert.ok(daoFeePackage, "the factory has no DAO fee package");
+    assert.equal(daoFeePackage.managementFee, 5n);
+    assert.equal(daoFeePackage.performanceFee, PERFORMANCE_FEE_BPS);
     const [totalManagementFee, totalPerformanceFee] = await Promise.all([
       publicClient.readContract({
         address: feeManager,
@@ -219,7 +225,7 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
       }),
     ]);
     assert.equal(totalManagementFee, 5n);
-    assert.equal(totalPerformanceFee, 1000n);
+    assert.equal(totalPerformanceFee, PERFORMANCE_FEE_BPS);
   });
 
   it("03 the Atomist sets a 200 bps management and 1000 bps performance fee for a recipient", async () => {
@@ -238,7 +244,7 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
       }),
     ]);
     assert.equal(totalManagementFeeBefore, 5n);
-    assert.equal(totalPerformanceFeeBefore, 1000n);
+    assert.equal(totalPerformanceFeeBefore, PERFORMANCE_FEE_BPS);
     await atomist.writeContract({
       address: feeManager,
       abi: feeManagerAbi,
@@ -265,8 +271,8 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
         functionName: "getTotalPerformanceFee",
       }),
     ]);
-    assert.equal(totalManagementFee, 205n);
-    assert.equal(totalPerformanceFee, 2000n);
+    assert.equal(totalManagementFee, TOTAL_MANAGEMENT_FEE_BPS);
+    assert.equal(totalPerformanceFee, TOTAL_PERFORMANCE_FEE_BPS);
     await assert.rejects(
       // Expected to revert: the 500 bps management limit (5000 for performance) counts the DAO fee, so 600 + 5 = 605.
       atomist.writeContract({
@@ -436,11 +442,12 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
         args: [dao],
       }),
     ]);
-    assert.equal(await publicClient.readContract({
+    const totalSupplyShares = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "totalSupply",
-    }), supplyBefore);
+    });
+    assert.equal(totalSupplyShares, supplyBefore);
     // The recipient shares round down, so a few wei of shares (22 here) stay in a fee account.
     const managementFeeAccountShares = await publicClient.readContract({
       address: vault,
@@ -461,22 +468,24 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
       abi: vaultAbi,
       functionName: "totalSupply",
     });
-    assert.equal(await publicClient.readContract({
+    const totalSupplyCapBefore = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "getTotalSupplyCap",
-    }), maxUint256);
+    });
+    assert.equal(totalSupplyCapBefore, maxUint256);
     await atomist.writeContract({
       address: vault,
       abi: vaultAbi,
       functionName: "setTotalSupplyCap",
       args: [totalSupply + amount50Shares],
     });
-    assert.equal(await publicClient.readContract({
+    const totalSupplyCapAfter = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "getTotalSupplyCap",
-    }), totalSupply + amount50Shares);
+    });
+    assert.equal(totalSupplyCapAfter, totalSupply + amount50Shares);
 
     // maxDeposit gives the room left in assets, the value a deposit should show.
     const maxDeposit = await publicClient.readContract({
@@ -516,12 +525,13 @@ describe("S10 Operate a USDC vault: fees, supply cap and share transfers", () =>
       abi: vaultAbi,
       functionName: "enableTransferShares",
     });
-    assert.equal(await publicClient.readContract({
+    const shareReceiverSharesBalance = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "balanceOf",
       args: [SHARE_RECEIVER],
-    }), 0n);
+    });
+    assert.equal(shareReceiverSharesBalance, 0n);
     await depositor.writeContract({
       address: vault,
       abi: vaultAbi,

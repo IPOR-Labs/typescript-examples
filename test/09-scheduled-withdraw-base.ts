@@ -84,6 +84,12 @@ const amount500Usdc = parseUnits("500", USDC_DECIMALS);
 const amount200Usdc = parseUnits("200", USDC_DECIMALS);
 const amount300Usdc = parseUnits("300", USDC_DECIMALS);
 
+const GAS_TOP_UP = parseEther("1");
+const ONE_DAY_SECONDS = 86400n;
+// Moves the chain clock past the current block.
+// A received amount may fall 0.1% short of the quote.
+const RECEIVED_MIN_BPS = 9990n;
+
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
 const owner = await viem.getWalletClient(OWNER);
@@ -101,7 +107,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
     await networkHelpers.impersonateAccount(USDC_WHALE);
     // Gives the whale ETH to pay gas for its USDC transfers.
-    await networkHelpers.setBalance(USDC_WHALE, parseEther("1"));
+    await networkHelpers.setBalance(USDC_WHALE, GAS_TOP_UP);
     const whale = await viem.getWalletClient(USDC_WHALE);
     for (const depositor of [DEPOSITOR_A, DEPOSITOR_B] as const) {
       await whale.writeContract({
@@ -531,8 +537,8 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     const block = await publicClient.getBlock();
     lockEnd = block.timestamp + window;
 
-    assert.equal(window, 86400n);
-    assert.equal(requestFee, parseEther("0.01"));
+    assert.equal(window, ONE_DAY_SECONDS);
+    assert.equal(requestFee, feeOnePercent);
     assert.equal((amount400Usdc * requestFee) / 10n ** FEE_DECIMALS, amount4Usdc);
   });
 
@@ -639,7 +645,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     const releaseTotal = sharesToRelease + shares;
     assert.equal(sharesToRelease, 0n);
     assert.equal(releaseRequest.canWithdraw, false);
-    await networkHelpers.time.increase(1);
+    await networkHelpers.time.increase(ONE_SECOND);
     await alpha.writeContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
@@ -716,7 +722,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
       }),
     ]);
     assert.ok(
-      received <= expected && received >= (expected * 9990n) / 10000n,
+      received <= expected && received >= (expected * RECEIVED_MIN_BPS) / 10000n,
       `received ${received}, expected about ${expected}`,
     );
     assert.equal(depositorARequest.shares, 0n);
@@ -800,7 +806,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     });
     const releaseTotal = sharesToRelease + sharesAmount2;
     assert.equal(releaseRequest.canWithdraw, false);
-    await networkHelpers.time.increase(1);
+    await networkHelpers.time.increase(ONE_SECOND);
     await alpha.writeContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
@@ -960,7 +966,7 @@ describe("S9 Scheduled withdraw from a USDC vault on Aave V3", () => {
     });
     const releaseTotal = sharesToRelease + shares;
     assert.equal(releaseRequest.canWithdraw, false);
-    await networkHelpers.time.increase(1);
+    await networkHelpers.time.increase(ONE_SECOND);
     await alpha.writeContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,

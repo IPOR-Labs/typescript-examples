@@ -61,6 +61,8 @@ const amount200Usdc = parseUnits("200", USDC_DECIMALS);
 const amount1000000Shares = parseUnits("1000000", VAULT_SHARE_DECIMALS);
 const amount1Shares = parseUnits("1", VAULT_SHARE_DECIMALS);
 
+const GAS_TOP_UP = parseEther("1");
+
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
 const owner = await viem.getWalletClient(OWNER);
@@ -75,7 +77,7 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
     await networkHelpers.impersonateAccount(USDC_WHALE);
     // Gives the whale ETH to pay gas for its USDC transfer.
-    await networkHelpers.setBalance(USDC_WHALE, parseEther("1"));
+    await networkHelpers.setBalance(USDC_WHALE, GAS_TOP_UP);
     const whale = await viem.getWalletClient(USDC_WHALE);
     await whale.writeContract({
       address: USDC,
@@ -108,12 +110,13 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       abi: vaultAbi,
       functionName: "getAccessManagerAddress",
     });
-    assert.deepEqual(await publicClient.readContract({
+    const atomistMembershipBefore = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "hasRole",
       args: [ATOMIST_ROLE, ATOMIST],
-    }), [false, 0]);
+    });
+    assert.deepEqual(atomistMembershipBefore, [false, 0]);
     const depositRoleBefore = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -121,12 +124,13 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       args: [vault, DEPOSIT_SELECTOR],
     });
     assert.notEqual(depositRoleBefore, PUBLIC_ROLE);
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdcBefore = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, vault],
-    }), 0n);
+    });
+    assert.equal(depositorAllowanceUsdcBefore, 0n);
     await owner.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -161,34 +165,37 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
     ]);
     assert.deepEqual(atomistMembership, [true, 0]);
     assert.equal(depositRole, PUBLIC_ROLE);
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdcAfter = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, vault],
-    }), amount1000Usdc);
+    });
+    assert.equal(depositorAllowanceUsdcAfter, amount1000Usdc);
   });
 
   it("02 the Owner sets a one-hour floor for Atomist, which binds only new grants", async () => {
     // On the vault, Owner only: the minimal execution delay a new grant of each role must carry.
-    assert.equal(await publicClient.readContract({
+    const atomistExecutionDelaySecondsBefore = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "getMinimalExecutionDelayForRole",
       args: [ATOMIST_ROLE],
-    }), 0n);
+    });
+    assert.equal(atomistExecutionDelaySecondsBefore, 0n);
     await owner.writeContract({
       address: vault,
       abi: vaultAbi,
       functionName: "setMinimalExecutionDelaysForRoles",
       args: [[ATOMIST_ROLE], [BigInt(ONE_HOUR)]],
     });
-    assert.equal(await publicClient.readContract({
+    const atomistExecutionDelaySecondsAfter = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "getMinimalExecutionDelayForRole",
       args: [ATOMIST_ROLE],
-    }), BigInt(ONE_HOUR));
+    });
+    assert.equal(atomistExecutionDelaySecondsAfter, BigInt(ONE_HOUR));
     // The existing Atomist keeps delay 0: a floor alone timelocks no one.
     const atomistMembership = await publicClient.readContract({
       address: accessManager,
@@ -211,12 +218,13 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
 
   it("03 the Owner re-grants Atomist with a one-hour delay", async () => {
     // A timelock is applied per account, by granting the role again with an execution delay.
-    assert.deepEqual(await publicClient.readContract({
+    const atomistMembershipBefore = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "hasRole",
       args: [ATOMIST_ROLE, ATOMIST],
-    }), [true, 0]);
+    });
+    assert.deepEqual(atomistMembershipBefore, [true, 0]);
     await owner.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -224,13 +232,13 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       args: [ATOMIST_ROLE, ATOMIST, ONE_HOUR],
     });
 
-    const atomistMembership = await publicClient.readContract({
+    const atomistMembershipAfter = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "hasRole",
       args: [ATOMIST_ROLE, ATOMIST],
     });
-    assert.deepEqual(atomistMembership, [true, ONE_HOUR]);
+    assert.deepEqual(atomistMembershipAfter, [true, ONE_HOUR]);
   });
 
   it("04 a direct Atomist call now reverts", async () => {
@@ -260,12 +268,13 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       functionName: "hashOperation",
       args: [ATOMIST, vault, data],
     });
-    assert.equal(await publicClient.readContract({
+    const operationScheduleBefore = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "getSchedule",
       args: [operationId],
-    }), 0);
+    });
+    assert.equal(operationScheduleBefore, 0);
     // On the access manager: when 0 means now plus the caller's delay.
     await atomist.writeContract({
       address: accessManager,
@@ -291,11 +300,12 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
     );
 
     await networkHelpers.time.increase(ONE_HOUR);
-    assert.equal(await publicClient.readContract({
+    const totalSupplyCapBefore = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "getTotalSupplyCap",
-    }), maxUint256);
+    });
+    assert.equal(totalSupplyCapBefore, maxUint256);
     // Only the account that scheduled the call may execute it.
     await atomist.writeContract({
       address: accessManager,
@@ -304,29 +314,31 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       args: [vault, data],
     });
 
-    const totalSupplyCap = await publicClient.readContract({
+    const totalSupplyCapAfter = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "getTotalSupplyCap",
     });
-    assert.equal(totalSupplyCap, amount1000000Shares);
+    assert.equal(totalSupplyCapAfter, amount1000000Shares);
     // Execute consumes the schedule.
-    assert.equal(await publicClient.readContract({
+    const operationScheduleAfter = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "getSchedule",
       args: [operationId],
-    }), 0);
+    });
+    assert.equal(operationScheduleAfter, 0);
   });
 
   it("06 the Owner grants Guardian, and the Guardian cancels a scheduled call", async () => {
     // Guardian is administered by the Owner and guards every function role, so it may cancel any scheduled call.
-    assert.deepEqual(await publicClient.readContract({
+    const guardianMembershipBefore = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "hasRole",
       args: [GUARDIAN_ROLE, GUARDIAN],
-    }), [false, 0]);
+    });
+    assert.deepEqual(guardianMembershipBefore, [false, 0]);
     await owner.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -344,12 +356,13 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       functionName: "hashOperation",
       args: [ATOMIST, vault, data],
     });
-    assert.equal(await publicClient.readContract({
+    const operationScheduleBefore = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "getSchedule",
       args: [operationId],
-    }), 0);
+    });
+    assert.equal(operationScheduleBefore, 0);
     await atomist.writeContract({
       address: accessManager,
       abi: accessManagerAbi,
@@ -370,21 +383,22 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       functionName: "cancel",
       args: [ATOMIST, vault, data],
     });
-    assert.equal(await publicClient.readContract({
+    const operationScheduleAfter = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "getSchedule",
       args: [operationId],
-    }), 0);
+    });
+    assert.equal(operationScheduleAfter, 0);
     await networkHelpers.time.increase(ONE_HOUR);
 
-    const guardianMembership = await publicClient.readContract({
+    const guardianMembershipAfter = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "hasRole",
       args: [GUARDIAN_ROLE, GUARDIAN],
     });
-    assert.deepEqual(guardianMembership, [true, 0]);
+    assert.deepEqual(guardianMembershipAfter, [true, 0]);
     await assert.rejects(
       // Expected to revert: the cancelled call is no longer scheduled.
       atomist.writeContract({
@@ -404,11 +418,12 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
   });
 
   it("07 the Guardian pauses the vault, views still answer, then unpauses it", async () => {
-    assert.equal(await publicClient.readContract({
+    const vaultTotalAssets1 = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "totalAssets",
-    }), 0n);
+    });
+    assert.equal(vaultTotalAssets1, 0n);
     await depositor.writeContract({
       address: vault,
       abi: vaultAbi,
@@ -439,12 +454,13 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       args: [vault, true],
     });
 
-    assert.equal(await publicClient.readContract({
+    const vaultTargetClosedBefore = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "isTargetClosed",
       args: [vault],
-    }), true);
+    });
+    assert.equal(vaultTargetClosedBefore, true);
     await assert.rejects(
       // Expected to revert: the vault is closed.
       depositor.writeContract({
@@ -455,11 +471,12 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       }),
       /AccessManagedUnauthorized/,
     );
-    assert.equal(await publicClient.readContract({
+    const vaultTotalAssets2 = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "totalAssets",
-    }), amount100Usdc);
+    });
+    assert.equal(vaultTotalAssets2, amount100Usdc);
     // maxDeposit does not know about the pause and stays non-zero: a deposit must check isTargetClosed itself.
     assert.ok((await publicClient.readContract({
       address: vault,
@@ -474,12 +491,13 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       functionName: "updateTargetClosed",
       args: [vault, false],
     });
-    assert.equal(await publicClient.readContract({
+    const vaultTargetClosedAfter = await publicClient.readContract({
       address: accessManager,
       abi: accessManagerAbi,
       functionName: "isTargetClosed",
       args: [vault],
-    }), false);
+    });
+    assert.equal(vaultTargetClosedAfter, false);
     await depositor.writeContract({
       address: vault,
       abi: vaultAbi,
@@ -487,10 +505,11 @@ describe("S11 Govern a USDC vault: timelock, cancel and pause", () => {
       args: [amount100Usdc, DEPOSITOR],
     });
 
-    assert.equal(await publicClient.readContract({
+    const vaultTotalAssets3 = await publicClient.readContract({
       address: vault,
       abi: vaultAbi,
       functionName: "totalAssets",
-    }), amount200Usdc);
+    });
+    assert.equal(vaultTotalAssets3, amount200Usdc);
   });
 });

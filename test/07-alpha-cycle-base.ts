@@ -68,6 +68,9 @@ const E_MODE_NONE = 0n;
 const amount1000Usdc = parseUnits("1000", USDC_DECIMALS);
 const amount300Usdc = parseUnits("300", USDC_DECIMALS);
 
+const GAS_TOP_UP = parseEther("1");
+const THIRTY_DAYS = 30 * 24 * 60 * 60;
+
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
 const owner = await viem.getWalletClient(OWNER);
@@ -85,7 +88,7 @@ describe("S7 Alpha cycle on Aave V3", () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
     await networkHelpers.impersonateAccount(USDC_WHALE);
     // Gives the whale ETH to pay gas for its USDC transfer.
-    await networkHelpers.setBalance(USDC_WHALE, parseEther("1"));
+    await networkHelpers.setBalance(USDC_WHALE, GAS_TOP_UP);
     const whale = await viem.getWalletClient(USDC_WHALE);
     await whale.writeContract({
       address: USDC,
@@ -528,7 +531,7 @@ describe("S7 Alpha cycle on Aave V3", () => {
       abi: vaultAbi,
       functionName: "totalAssets",
     });
-    await networkHelpers.time.increase(30 * 24 * 60 * 60);
+    await networkHelpers.time.increase(THIRTY_DAYS);
 
     // Aave pays interest into the aToken balance, but the vault stores the market balance until it is refreshed.
     const [inAaveNow, totalAssetsNow] = await Promise.all([
@@ -572,7 +575,7 @@ describe("S7 Alpha cycle on Aave V3", () => {
     });
 
     // Fresh balances in one round trip: a single multicall reads every market, like ipor-webapp does per market.
-    // Pattern: peers/ipor-webapp/packages/fusion-sdk/src/markets/aave-v3/read-aave-pool-balances.ts (read-aave-pool-balances)
+    // Pattern: https://github.com/IPOR-Labs/ipor-webapp/blob/220fe2a0a794f4194f6b5895febeb65e95839bb0/packages/fusion-sdk/src/markets/aave-v3/read-aave-pool-balances.ts (read-aave-pool-balances)
     const [totalAssetsAfter, inAaveAfter, inErc20After] = await publicClient.multicall({
       allowFailure: false,
       contracts: [

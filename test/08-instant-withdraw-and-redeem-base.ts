@@ -86,6 +86,11 @@ const amount601Usdc = parseUnits("601", USDC_DECIMALS);
 const amount200Usdc = parseUnits("200", USDC_DECIMALS);
 const amount100Usdc = parseUnits("100", USDC_DECIMALS);
 
+const GAS_TOP_UP = parseEther("1");
+// The burned shares are worth 101 USDC within 0.01%.
+const BURN_LOWER_BPS = 10099n;
+const BURN_UPPER_BPS = 10101n;
+
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
 const owner = await viem.getWalletClient(OWNER);
@@ -101,7 +106,7 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
     await networkHelpers.impersonateAccount(USDC_WHALE);
     // Gives the whale ETH to pay gas for its USDC transfer.
-    await networkHelpers.setBalance(USDC_WHALE, parseEther("1"));
+    await networkHelpers.setBalance(USDC_WHALE, GAS_TOP_UP);
     const whale = await viem.getWalletClient(USDC_WHALE);
     await whale.writeContract({
       address: USDC,
@@ -751,11 +756,12 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       args: [WITHDRAW_MANAGER_WITHDRAW_FEE_ROLE, ATOMIST],
     });
     assert.equal(atomistHasRole902, true);
-    assert.equal(await publicClient.readContract({
+    const withdrawFeeBefore = await publicClient.readContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
       functionName: "getWithdrawFee",
-    }), 0n);
+    });
+    assert.equal(withdrawFeeBefore, 0n);
     await atomist.writeContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
@@ -763,11 +769,12 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
       args: [feeOnePercent],
     });
 
-    assert.equal(await publicClient.readContract({
+    const withdrawFeeAfter = await publicClient.readContract({
       address: withdrawManager,
       abi: withdrawManagerAbi,
       functionName: "getWithdrawFee",
-    }), parseEther("0.01"));
+    });
+    assert.equal(withdrawFeeAfter, feeOnePercent);
   });
 
   it("11 withdraw(100 USDC) pays 100 USDC and burns about 101 USDC of shares", async () => {
@@ -816,7 +823,7 @@ describe("S8 Instant withdraw and redeem on a USDC vault with Aave V3", () => {
     assert.ok(burned > sharesFor100, `burned ${burned}, 100 USDC is ${sharesFor100} shares`);
     // The fee is 1% of the shares for 100 USDC, so the burned shares are worth about 101 USDC at the price before the call.
     assert.ok(
-      burned * 10000n >= sharesFor100 * 10099n && burned * 10000n <= sharesFor100 * 10101n,
+      burned * 10000n >= sharesFor100 * BURN_LOWER_BPS && burned * 10000n <= sharesFor100 * BURN_UPPER_BPS,
       `burned ${burned}, 100 USDC is ${sharesFor100} shares`,
     );
   });

@@ -5,21 +5,26 @@ import { vaultAbi } from "../abis/vault.abi.ts";
 
 // Rates and prices are scaled to 18 decimals, as in a client.
 const WAD_DECIMALS = 18;
+const WETH_DECIMALS = BigInt(WAD_DECIMALS);
+const USDC_DECIMALS = 6n;
+// Price impact is a percent with two decimals: scale the fraction up, then divide by the percent divisor.
+const IMPACT_SCALE = 10_000n;
+const IMPACT_PERCENT_DIVISOR = 100;
 
 // A client shows these numbers before the transaction, from a simulation of the zap. The S6 stories skip simulation,
 // so they compute them from the balance changes of the real transaction.
 export const previewValues = async ({
   publicClient,
   vault,
-  weth,
-  usdc,
+  wethAddress,
+  usdcAddress,
   youDeposit,
   youReceive,
 }: {
   publicClient: PublicClient;
   vault: Address;
-  weth: Address;
-  usdc: Address;
+  wethAddress: Address;
+  usdcAddress: Address;
   youDeposit: bigint;
   youReceive: bigint;
 }) => {
@@ -40,10 +45,10 @@ export const previewValues = async ({
     });
     return (amount * price * 10n ** BigInt(WAD_DECIMALS)) / 10n ** priceDecimals / 10n ** decimals;
   };
-  const usdIn = await usd18(weth, youDeposit, 18n);
-  const usdOut = await usd18(usdc, youReceive, 6n);
-  // Price impact in percent with two decimals, as computePriceImpact in ipor-webapp src/fusion/deposit/aggregator-zap-in/aggregator-zap-in.utils.ts at eb6664e2e: (usdIn - usdOut) / usdIn * 100.
-  const priceImpact = Number(((usdIn - usdOut) * 10_000n) / usdIn) / 100;
+  const usdIn = await usd18(wethAddress, youDeposit, WETH_DECIMALS);
+  const usdOut = await usd18(usdcAddress, youReceive, USDC_DECIMALS);
+  // Price impact in percent with two decimals, as computePriceImpact in ipor-webapp src/fusion/deposit/aggregator-zap-in/aggregator-zap-in.utils.ts at eb6664e2e: (usdIn - usdOut) / usdIn as a percent.
+  const priceImpact = Number(((usdIn - usdOut) * IMPACT_SCALE) / usdIn) / IMPACT_PERCENT_DIVISOR;
 
   assert.ok(youDeposit > 0n, `You deposit ${youDeposit}`);
   assert.ok(rate > 0n, `rate ${rate}`);

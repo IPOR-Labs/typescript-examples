@@ -1,7 +1,7 @@
 // S4 Private vault: keep a USDC vault private, whitelist an EOA and see which deposits it refuses.
 // It stands alone: steps 01 and 02 repeat S1's setup in short (test/01-create-and-configure-base.ts),
 // without a market and without convertToPublicVault, so the vault stays private.
-// The values every deposit method shares (balance, Max, USD value, paused, maxDeposit, withdraw note)
+// The values every deposit method shares (balance, USD value, paused, maxDeposit, withdraw note)
 // are read as in S3 (test/03-direct-deposit-base.ts). This story shows only what a private vault adds.
 // Every step is a real transaction on a Base fork, and a step depends on the steps above it.
 // The story skips simulation on purpose, to show the transaction flow. A real app on a real
@@ -46,6 +46,8 @@ const VAULT_NAME = "Private USDC";
 const VAULT_SYMBOL = "pUSDC";
 const REDEMPTION_DELAY = 0n;
 const DAO_FEE_PACKAGE_INDEX = 0n;
+
+const GAS_TOP_UP = parseEther("1");
 
 const { viem, networkHelpers } = await network.create("base");
 const publicClient = await viem.getPublicClient();
@@ -120,14 +122,15 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
     // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
     await networkHelpers.impersonateAccount(USDC_WHALE);
     // Gives the whale ETH to pay gas for its USDC transfer.
-    await networkHelpers.setBalance(USDC_WHALE, parseEther("1"));
+    await networkHelpers.setBalance(USDC_WHALE, GAS_TOP_UP);
     const whale = await viem.getWalletClient(USDC_WHALE);
-    assert.equal(await publicClient.readContract({
+    const depositorUsdcBalance = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "balanceOf",
       args: [DEPOSITOR],
-    }), 0n);
+    });
+    assert.equal(depositorUsdcBalance, 0n);
     await whale.writeContract({
       address: USDC,
       abi: erc20Abi,
@@ -156,12 +159,13 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
       functionName: "approve",
       args: [vault, amount1000Usdc],
     });
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdc = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, vault],
-    }), amount1000Usdc);
+    });
+    assert.equal(depositorAllowanceUsdc, amount1000Usdc);
 
     const [depositorHasRole] = await publicClient.readContract({
       address: accessManager,
@@ -284,24 +288,26 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
     // ReferralPlasmaVault takes the tokens and calls vault.deposit itself, so the vault sees the wrapper as the caller.
     // WHITELIST_ROLE is granted only to EOAs, never to a contract such as the zap or the referral wrapper,
     // so zaps and referral deposits do not work on a private vault. A private vault takes deposits directly.
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdcBefore = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, REFERRAL_PLASMA_VAULT],
-    }), 0n);
+    });
+    assert.equal(depositorAllowanceUsdcBefore, 0n);
     await depositor.writeContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
       args: [REFERRAL_PLASMA_VAULT, amount100Usdc],
     });
-    assert.equal(await publicClient.readContract({
+    const depositorAllowanceUsdcAfter = await publicClient.readContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "allowance",
       args: [DEPOSITOR, REFERRAL_PLASMA_VAULT],
-    }), amount100Usdc);
+    });
+    assert.equal(depositorAllowanceUsdcAfter, amount100Usdc);
 
     const [referralPlasmaVaultHasRole] = await publicClient.readContract({
       address: accessManager,
