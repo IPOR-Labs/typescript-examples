@@ -36,41 +36,67 @@ if ((aggregator !== "kyberswap" && aggregator !== "velora") || (chainName !== "e
 }
 const chain = CHAINS[chainName];
 
-const json = async (res: Response) => {
-  const body = (await res.json()) as any;
-  if (!res.ok) throw new Error(`${res.status} ${res.url}: ${JSON.stringify(body).slice(0, 300)}`);
+const readJsonResponse = async (response: Response): Promise<unknown> => {
+  const body: unknown = await response.json();
+  if (!response.ok) throw new Error(`${response.status} ${response.url}: ${JSON.stringify(body).slice(0, 300)}`);
   return body;
 };
-const post = (url: string, body: unknown) =>
-  fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then(json);
+const postJson = (url: string, body: unknown) =>
+  fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then(
+    readJsonResponse,
+  );
+
+// Reads a dotted path from a response body, throwing an error that names the missing field.
+const readField = (source: unknown, path: string): unknown => {
+  let value = source;
+  for (const key of path.split(".")) {
+    if (typeof value !== "object" || value === null || !(key in value)) {
+      throw new Error(`Aggregator response is missing "${path}"`);
+    }
+    value = (value as Record<string, unknown>)[key];
+  }
+  return value;
+};
+const readString = (source: unknown, path: string): string => {
+  const value = readField(source, path);
+  if (typeof value !== "string") throw new Error(`Aggregator response field "${path}" is not a string`);
+  return value;
+};
+const readNumber = (source: unknown, path: string): number => {
+  const value = readField(source, path);
+  if (typeof value !== "number") throw new Error(`Aggregator response field "${path}" is not a number`);
+  return value;
+};
 
 const rpcUrl = process.env[chain.rpcEnv];
 if (!rpcUrl) throw new Error(`${chain.rpcEnv} is not set in .env`);
 const headBlock = async () =>
-  parseInt((await post(rpcUrl, { jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] })).result, 16);
+  parseInt(
+    readString(await postJson(rpcUrl, { jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }), "result"),
+    16,
+  );
 
 let block: number, quotedOut: bigint, target: string, approvalProxy: string, calldata: string;
 
 if (aggregator === "kyberswap") {
   const base = `https://aggregator-api.kyberswap.com/${chainName}/api/v1`;
   block = await headBlock(); // the routes response carries no block number
-  const route = await json(
+  const route = await readJsonResponse(
     await fetch(`${base}/routes?${new URLSearchParams({ tokenIn: chain.weth, tokenOut: chain.usdc, amountIn: AMOUNT_IN.toString() })}`),
   );
-  const build = (
-    await post(`${base}/route/build`, {
-      routeSummary: route.data.routeSummary,
-      sender: chain.zap,
-      recipient: chain.zap,
-      slippageTolerance: SLIPPAGE_BPS,
-      deadline: FAR_DEADLINE,
-    })
-  ).data;
-  quotedOut = BigInt(route.data.routeSummary.amountOut);
-  target = approvalProxy = build.routerAddress;
-  calldata = build.data;
+  const routeSummary = readField(route, "data.routeSummary");
+  const build = await postJson(`${base}/route/build`, {
+    routeSummary,
+    sender: chain.zap,
+    recipient: chain.zap,
+    slippageTolerance: SLIPPAGE_BPS,
+    deadline: FAR_DEADLINE,
+  });
+  quotedOut = BigInt(readString(routeSummary, "amountOut"));
+  target = approvalProxy = readString(build, "data.routerAddress");
+  calldata = readString(build, "data.data");
 } else {
-  const prices = await json(
+  const prices = await readJsonResponse(
     await fetch(
       `https://api.velora.xyz/prices?${new URLSearchParams({
         srcToken: chain.weth,
@@ -85,9 +111,9 @@ if (aggregator === "kyberswap") {
       })}`,
     ),
   );
-  const { priceRoute } = prices;
-  block = priceRoute.blockNumber;
-  const tx = await post(`https://api.velora.xyz/transactions/${chain.id}?ignoreChecks=true`, {
+  const priceRoute = readField(prices, "priceRoute");
+  block = readNumber(priceRoute, "blockNumber");
+  const transaction = await postJson(`https://api.velora.xyz/transactions/${chain.id}?ignoreChecks=true`, {
     srcToken: chain.weth,
     destToken: chain.usdc,
     srcDecimals: 18,
@@ -98,10 +124,10 @@ if (aggregator === "kyberswap") {
     slippage: SLIPPAGE_BPS,
     deadline: FAR_DEADLINE,
   });
-  quotedOut = BigInt(priceRoute.destAmount);
-  target = tx.to;
-  approvalProxy = priceRoute.tokenTransferProxy;
-  calldata = tx.data;
+  quotedOut = BigInt(readString(priceRoute, "destAmount"));
+  target = readString(transaction, "to");
+  approvalProxy = readString(priceRoute, "tokenTransferProxy");
+  calldata = readString(transaction, "data");
 }
 
 const fixture = {

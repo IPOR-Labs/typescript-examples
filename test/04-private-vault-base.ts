@@ -83,12 +83,14 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
 
   it("02 the owner grants Atomist, as in S1 step 02", async () => {
     // The Atomist is the admin of WHITELIST_ROLE. No other role is needed: deposits stay idle in the vault, without a market.
+    // On the access manager: the Owner grants the Atomist role, which unlocks convertToPublicVault and the role grants that follow.
     await publicClient.waitForTransactionReceipt({ hash: await owner.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [ATOMIST_ROLE, ATOMIST, 0] }) });
 
     assert.equal(await hasRole(ATOMIST_ROLE, ATOMIST), true);
   });
 
   it("03 a depositor without WHITELIST_ROLE is refused", async () => {
+    // Only the USDC whale needs impersonating: every other account is an unlocked Hardhat default account.
     await networkHelpers.impersonateAccount(USDC_WHALE);
     // Gives the whale ETH to pay gas for its USDC transfer.
     await networkHelpers.setBalance(USDC_WHALE, parseEther("1"));
@@ -105,6 +107,7 @@ describe("S4 Private vault: whitelist an EOA and the refused deposits", () => {
   });
 
   it("04 the Atomist grants WHITELIST_ROLE to the depositor, an EOA", async () => {
+    // As Atomist (admin of WHITELIST_ROLE), grants the depositor WHITELIST_ROLE, which unlocks deposit.
     await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [WHITELIST_ROLE, DEPOSITOR, 0] }) });
 
     assert.equal(await hasRole(WHITELIST_ROLE, DEPOSITOR), true);

@@ -13,8 +13,9 @@ import { describe, it } from "node:test";
 import { network } from "hardhat";
 import { encodeFunctionData, erc20Abi, maxUint256, parseAbi, parseEther, parseEventLogs, parseUnits, zeroAddress, type Address } from "viem";
 
-// Ethereum addresses, from ipor-abi: mainnet/mainnet-ethereum-fusion/addresses.json (factory, zap)
-// and @ipor/fusion-sdk markets/{weth,lido,reservoir} addresses (tokens, Reservoir PSM and CreditEnforcer).
+// Ethereum addresses, from ipor-abi: mainnet/mainnet-ethereum-fusion/addresses.json at 9d1a7c7 (factory, zap)
+// and ipor-webapp packages/fusion-sdk/src/markets/{weth,lido,reservoir}/*.addresses.ts at 556ca3f5a, 37b9619a2 and 37b9619a2
+// (tokens, Reservoir PSM and CreditEnforcer).
 const FACTORY = "0xcd05909C4A1F8E501e4ED554cEF4Ed5E48D9b852";
 const ZAP = "0x677251190C0cCcC6E7e71C385B3EA660Dfd89c00";
 const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
@@ -24,7 +25,7 @@ const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 const RUSD = "0x09D4214C03D01F49544C0448DBE3A27f768F2b34";
 const RESERVOIR_PSM = "0x4809010926aec940b550D34a46A52739f996D75D";
 const RESERVOIR_CREDIT_ENFORCER = "0x04716DB62C085D9e08050fcF6F7D775A03d07720";
-// Chainlink ETH/USD on Ethereum, the feed the IPOR webapp reads for the native token price (src/usdPrices/types.ts).
+// Chainlink ETH/USD on Ethereum, the feed the IPOR webapp reads for the native token price (ipor-webapp src/usdPrices/types.ts at a1416b1fd).
 const CHAINLINK_ETH_USD = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419";
 // Morpho Blue holds wstETH and USDC on Ethereum: the story funds the depositor from it.
 const WHALE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
@@ -95,6 +96,7 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
       assert.ok(created, "the receipt has no FusionInstanceCreated event");
       const vault = created.args.plasmaVault;
       const accessManager = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getAccessManagerAddress" });
+      // On the access manager: the Owner grants the Atomist role, which unlocks convertToPublicVault and the role grants that follow.
       await publicClient.waitForTransactionReceipt({ hash: await owner.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [ATOMIST_ROLE, ATOMIST, 0] }) });
       await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: vault, abi: vaultAbi, functionName: "convertToPublicVault" }) });
       return vault;
@@ -155,7 +157,9 @@ describe("S5 Token zaps on Ethereum: Wrap ETH, Stake ETH, Unwrap wstETH, Mint rU
 
   it("05 Unwrap wstETH: the depositor approves the zap's allowance contract, and the zap unwraps into the stETH vault", async () => {
     const amount = parseEther("1");
+    // Unlocks the Morpho Blue address so the story can send its wstETH from it without its key.
     await networkHelpers.impersonateAccount(WHALE);
+    // Gives the whale ETH to pay gas for its wstETH transfer.
     await networkHelpers.setBalance(WHALE, parseEther("1"));
     const whale = await viem.getWalletClient(WHALE);
     await publicClient.waitForTransactionReceipt({ hash: await whale.writeContract({ address: WSTETH, abi: erc20Abi, functionName: "transfer", args: [DEPOSITOR, amount] }) });

@@ -136,7 +136,7 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
     };
     const usdIn = await usd18(WETH, youDeposit, 18n);
     const usdOut = await usd18(USDC, youReceive, 6n);
-    // Price impact in percent with two decimals, as computePriceImpact in the webapp: (usdIn - usdOut) / usdIn * 100.
+    // Price impact in percent with two decimals, as computePriceImpact in ipor-webapp src/fusion/deposit/aggregator-zap-in/aggregator-zap-in.utils.ts at eb6664e2e: (usdIn - usdOut) / usdIn * 100.
     const priceImpact = Number(((usdIn - usdOut) * 10_000n) / usdIn) / 100;
 
     assert.ok(youDeposit > 0n, `You deposit ${youDeposit}`);
@@ -153,6 +153,7 @@ describe("S6 Aggregator zap of WETH into a USDC vault on Ethereum", () => {
     assert.ok(created, "the receipt has no FusionInstanceCreated event");
     vault = created.args.plasmaVault;
     const accessManager = await publicClient.readContract({ address: vault, abi: vaultAbi, functionName: "getAccessManagerAddress" });
+    // On the access manager: the Owner grants the Atomist role, which unlocks convertToPublicVault and the role grants that follow.
     await publicClient.waitForTransactionReceipt({ hash: await owner.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [ATOMIST_ROLE, ATOMIST, 0] }) });
     await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: vault, abi: vaultAbi, functionName: "convertToPublicVault" }) });
 

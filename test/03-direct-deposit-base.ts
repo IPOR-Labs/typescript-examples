@@ -17,7 +17,7 @@ const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 // Morpho Blue on Base holds enough USDC at the fork block to fund the depositor.
 const USDC_WHALE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb";
 // The vault has no getter for its Withdraw Manager. WITHDRAW_MANAGER in PlasmaVaultStorageLib.sol (ipor-fusion 004d054)
-// is the storage slot that holds it; the webapp reads the same slot (use-withdraw-manager-address.ts).
+// is the storage slot that holds it; the webapp reads the same slot (ipor-webapp src/fusion/withdraw-manager/hooks/use-withdraw-manager-address.ts at 350b2f75b).
 const WITHDRAW_MANAGER_SLOT = "0x465d2ff0062318fe6f4c7e9ac78cfcd70bc86a1d992722875ef83a9770513100";
 
 // Role IDs from Roles.sol (ipor-fusion 4fdaf50).
@@ -110,14 +110,14 @@ describe("S3 Direct deposit into a public USDC vault", () => {
     await publicClient.waitForTransactionReceipt({ hash: await owner.writeContract({ address: accessManager, abi: accessManagerAbi, functionName: "grantRole", args: [ATOMIST_ROLE, ATOMIST, 0] }) });
     await publicClient.waitForTransactionReceipt({ hash: await atomist.writeContract({ address: vault, abi: vaultAbi, functionName: "convertToPublicVault" }) });
 
-    assert.notEqual(vault, zeroAddress);
-    assert.notEqual(withdrawManager, zeroAddress);
+    assert.ok(!isAddressEqual(vault, zeroAddress));
+    assert.ok(!isAddressEqual(withdrawManager, zeroAddress));
   });
 
   it("02 reads the values every deposit form shows, for an amount of 1000 USDC", async () => {
     const amount = usdc("1000");
 
-    // Balance label. Max is the balance for an ERC-20 (a native token keeps 5% back for gas, see S5).
+    // Balance label. Max is the balance for an ERC-20 (Max of a native balance keeps 5% back for gas: NATIVE_ETH_MAX_FILL_PERCENT = 95n in https://github.com/IPOR-Labs/ipor-webapp/blob/220fe2a0a794f4194f6b5895febeb65e95839bb0/src/fusion/deposit/deposit-token-amount/deposit-token-amount.types.tsx#L14).
     const balance = await publicClient.readContract({ address: USDC, abi: erc20Abi, functionName: "balanceOf", args: [DEPOSITOR] });
     const max = balance;
     assert.equal(balance, usdc("5000"));

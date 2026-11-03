@@ -32,5 +32,5 @@ Runnable [IPOR Fusion](https://ipor.io/) Plasma Vault stories in TypeScript and 
 - Read only the first failure. Later steps depend on earlier ones, so they cascade.
 - The factory installs `BurnRequestFeeFuseV2` in every clone, so `getFuses` returns it even on a fresh vault.
 - Zaps and referral deposits do not work on private vaults, because WHITELIST_ROLE is granted only to EOAs, never to a contract such as the zap or the referral wrapper.
-- S6 replays recorded aggregator routes at their pinned block. `node scripts/record-zap-fixture.ts <aggregator> <chain>` re-records one, then update its network's block in `hardhat.config.ts`.
+- S6 replays recorded aggregator routes at their pinned block. `node scripts/record-zap-fixture.ts <aggregator> <chain>` re-records one, then update its network's block in `hardhat.config.ts`. Re-record the two Ethereum fixtures together, back to back, put the earlier of their two blocks in the `ethereum` network, and re-run S5 at that block. The Base fixture keeps its own `base-kyberswap` network.
 - ABIs and addresses come from the `ipor-abi` repository (`mainnet/mainnet-base-fusion` at `8b1be92`, `mainnet/addresses.json` at `e228075`).
